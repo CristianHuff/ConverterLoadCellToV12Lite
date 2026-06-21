@@ -44,9 +44,9 @@ long maxAprendidoEmbr  = 0;
 // 100 = maximo aprendido vira 100%.
 // Maior que 100 = demora mais para chegar em 100%.
 // Menor que 100 = chega em 100% antes, sem esmagar tanto.
-const int AJUSTE_MAX_FREIO_PERCENT = 100;
-const int AJUSTE_MAX_ACEL_PERCENT  = 100;
-const int AJUSTE_MAX_EMBR_PERCENT  = 100;
+const int AJUSTE_MAX_FREIO_PERCENT = 90;
+const int AJUSTE_MAX_ACEL_PERCENT  = 95;
+const int AJUSTE_MAX_EMBR_PERCENT  = 95;
 
 // ── PWM alvo (calculado dos valores medidos na bancada) ──────
 const int PWM_REPOUSO   = 3;
@@ -54,16 +54,40 @@ const int PWM_MAX_FREIO = 204;
 const int PWM_MAX_ACEL  = 194;
 const int PWM_MAX_EMBR  = 193;
 
+// Curva de resposta por pedal:
+// 0 = linear.
+// Positivo = mais resposta no inicio/meio do curso.
+// Negativo = resposta mais suave no inicio/meio do curso.
+const int CURVA_FREIO_PERCENT = 0;
+const int CURVA_ACEL_PERCENT  = 0;
+const int CURVA_EMBR_PERCENT  = 0;
+
 // Zona morta em contagens brutas do HX711.
 // Valores pequenos perto de zero sao ruido normal, principalmente com entrada desconectada.
-const long ZONA_MORTA_FREIO = 2000;
-const long ZONA_MORTA_ACEL  = 2000;
-const long ZONA_MORTA_EMBR  = 2000;
+const long ZONA_MORTA_FREIO = 40000;
+const long ZONA_MORTA_ACEL  = 100;
+const long ZONA_MORTA_EMBR  = 500;
+
+// Minimos plausiveis para aceitar uma calibracao salva.
+// Evita gravar/usar maximo pequeno por toque acidental.
+const long CALIB_MIN_FREIO = 20000;
+const long CALIB_MIN_ACEL  = 20000;
+const long CALIB_MIN_EMBR  = 20000;
 
 // ── Filtro de média móvel ────────────────────────────────────
-const int AMOSTRAS = 4;
+const int AMOSTRAS = 2;
+const bool FILTRO_FREIO = true;
+const bool FILTRO_ACEL  = false;
+const bool FILTRO_EMBR  = true;
 long bufFreio[AMOSTRAS], bufAcel[AMOSTRAS], bufEmbr[AMOSTRAS];
 int idxFreio = 0, idxAcel = 0, idxEmbr = 0;
+
+// Protecao contra dropout eletrico/mecanico no acelerador.
+// Ignora poucas leituras impossiveis; aceita a soltada se a queda persistir.
+const bool PROTECAO_QUEDA_ACEL = true;
+const byte CONFIRMACOES_QUEDA_ACEL = 3;
+const int QUEDA_BRUSCA_ACEL_PERCENT = 35;
+const int ACEL_MIN_PROTECAO_PERCENT = 20;
 
 // ── Modo de calibração ───────────────────────────────────────
 // Deixe ativo para ver os valores brutos e calibrar CARGA_MAX
@@ -74,9 +98,19 @@ int idxFreio = 0, idxAcel = 0, idxEmbr = 0;
 // Ligue/desligue conforme o que quiser enxergar no Serial Monitor.
 const bool LOG_BRUTO = false;
 const bool LOG_FILT  = false;
-const bool LOG_UTIL  = false;
+const bool LOG_UTIL  = true;
 const bool LOG_PCT   = true;
+const bool LOG_OUT   = true;
 const bool LOG_PWM   = true;
+const bool LOG_PROT_ACEL = true;
+
+// Teste eletrico da saida para a base.
+// Deixe true para ignorar o HX711 do acelerador e gerar uma rampa no PWM_ACEL.
+const bool TESTE_SAIDA_ACEL = false;
+const unsigned long TESTE_SAIDA_PERIODO_MS = 10000;
+const int PWM_MAX_ACEL_TESTE = 180;
+const bool TESTE_SAIDA_ACEL_DEGRAUS = true;
+const unsigned long TESTE_SAIDA_DEGRAU_MS = 2500;
 
 // Tolerancia para considerar que valores HX711 mudaram de verdade.
 const long LOG_DELTA_HX711 = 100;
@@ -95,6 +129,9 @@ struct DadosCalibracao {
   long maxEmbr;
 };
 
+bool acelProtecaoAtiva = false;
+long acelUtilAntesProtecao = 0;
+
 // ============================================================
 long ajustaMaximo(long valor, int ajustePercent) {
   long ajustado = (valor * ajustePercent) / 100;
@@ -109,14 +146,19 @@ void carregarCalibracao() {
 
   if (dados.assinatura == EEPROM_ASSINATURA &&
       dados.versao == EEPROM_VERSAO &&
-      dados.maxFreio > ZONA_MORTA_FREIO &&
-      dados.maxAcel  > ZONA_MORTA_ACEL &&
-      dados.maxEmbr  > ZONA_MORTA_EMBR)
+      dados.maxFreio > CALIB_MIN_FREIO &&
+      dados.maxAcel  > CALIB_MIN_ACEL &&
+      dados.maxEmbr  > CALIB_MIN_EMBR)
   {
     CARGA_MAX_FREIO = dados.maxFreio;
     CARGA_MAX_ACEL  = dados.maxAcel;
     CARGA_MAX_EMBR  = dados.maxEmbr;
-    Serial.println("Calibracao carregada da EEPROM.");
+    Serial.print("Calibracao carregada da EEPROM. Maximos: FREIO ");
+    Serial.print(CARGA_MAX_FREIO);
+    Serial.print(" | ACEL ");
+    Serial.print(CARGA_MAX_ACEL);
+    Serial.print(" | EMBR ");
+    Serial.println(CARGA_MAX_EMBR);
   } else {
     Serial.println("Sem calibracao valida na EEPROM. Usando valores padrao.");
   }
@@ -126,21 +168,21 @@ void carregarCalibracao() {
 void salvarCalibracao() {
   bool atualizou = false;
 
-  if (maxAprendidoFreio > ZONA_MORTA_FREIO) {
+  if (maxAprendidoFreio > CALIB_MIN_FREIO) {
     CARGA_MAX_FREIO = ajustaMaximo(maxAprendidoFreio, AJUSTE_MAX_FREIO_PERCENT);
     atualizou = true;
   }
-  if (maxAprendidoAcel > ZONA_MORTA_ACEL) {
+  if (maxAprendidoAcel > CALIB_MIN_ACEL) {
     CARGA_MAX_ACEL = ajustaMaximo(maxAprendidoAcel, AJUSTE_MAX_ACEL_PERCENT);
     atualizou = true;
   }
-  if (maxAprendidoEmbr > ZONA_MORTA_EMBR) {
+  if (maxAprendidoEmbr > CALIB_MIN_EMBR) {
     CARGA_MAX_EMBR = ajustaMaximo(maxAprendidoEmbr, AJUSTE_MAX_EMBR_PERCENT);
     atualizou = true;
   }
 
   if (!atualizou) {
-    Serial.println("Nada para salvar: nenhum pedal passou da zona morta.");
+    Serial.println("Nada para salvar: nenhum pedal passou do minimo plausivel de calibracao.");
     return;
   }
 
@@ -174,6 +216,12 @@ void setup() {
   // Timer2 → pino 11 em ~31kHz
   TCCR2B = (TCCR2B & 0b11111000) | 0x01;
 
+  // A base pode verificar os pedais logo ao ligar. Coloca repouso na saida
+  // antes de esperar HX711/tare, para ela nao enxergar linha morta.
+  analogWrite(PWM_FREIO, PWM_REPOUSO);
+  analogWrite(PWM_ACEL,  PWM_REPOUSO);
+  analogWrite(PWM_EMBR,  PWM_REPOUSO);
+
   // Inicializa HX711 SEM fator de escala (leitura bruta)
   scFreio.begin(FREIO_DT, FREIO_SCK);
   scAcel.begin(ACEL_DT,   ACEL_SCK);
@@ -197,16 +245,11 @@ void setup() {
   memset(bufAcel,  0, sizeof(bufAcel));
   memset(bufEmbr,  0, sizeof(bufEmbr));
 
-  // Saída inicial em repouso
-  analogWrite(PWM_FREIO, PWM_REPOUSO);
-  analogWrite(PWM_ACEL,  PWM_REPOUSO);
-  analogWrite(PWM_EMBR,  PWM_REPOUSO);
-
   Serial.println("Sistema pronto.");
 
 #ifdef CALIBRACAO
   Serial.println("== MODO CALIBRACAO ==");
-  Serial.println("Use as flags LOG_BRUTO, LOG_FILT, LOG_UTIL, LOG_PCT e LOG_PWM para escolher o log.");
+  Serial.println("Use as flags LOG_BRUTO, LOG_FILT, LOG_UTIL, LOG_PCT, LOG_OUT e LOG_PWM para escolher o log.");
   if (LOG_BRUTO) {
     Serial.println("Aperte cada pedal ao fundo e anote o maior valor BRUTO.");
     Serial.println("Cole esses valores em CARGA_MAX_xxx e retire o #define CALIBRACAO.");
@@ -239,6 +282,44 @@ int calcPct(long leitura, long cargaMax) {
 }
 
 // ============================================================
+int aplicaCurvaPct(int pct, int curvaPercent) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+
+  long ajuste = ((long)pct * (100 - pct) * abs(curvaPercent)) / 10000;
+  if (curvaPercent > 0) pct += ajuste;
+  if (curvaPercent < 0) pct -= ajuste;
+
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  return pct;
+}
+
+// ============================================================
+int calcPWMDePct(int pct, int pwmMax) {
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
+  return map(pct, 0, 100, PWM_REPOUSO, pwmMax);
+}
+
+// ============================================================
+int pctTesteTriangular(unsigned long periodoMs) {
+  unsigned long fase = millis() % periodoMs;
+  unsigned long metade = periodoMs / 2;
+
+  if (fase < metade) return map(fase, 0, metade, 0, 100);
+  return map(fase - metade, 0, metade, 100, 0);
+}
+
+// ============================================================
+int pctTesteDegraus(unsigned long tempoDegrauMs) {
+  const int degraus[] = {0, 25, 50, 75, 100, 75, 50, 25};
+  const byte totalDegraus = sizeof(degraus) / sizeof(degraus[0]);
+  byte indice = (millis() / tempoDegrauMs) % totalDegraus;
+  return degraus[indice];
+}
+
+// ============================================================
 long aplicaZonaMorta(long leitura, long zonaMorta) {
   if (abs(leitura) <= zonaMorta) return 0;
   if (leitura < 0) return 0;
@@ -251,10 +332,47 @@ bool mudouLong(long atual, long anterior, long deltaMinimo) {
 }
 
 // ============================================================
+long protegeQuedaAcel(long utilAcel) {
+  static long ultimoAcelAceito = 0;
+  static byte leiturasQueda = 0;
+
+  acelProtecaoAtiva = false;
+  acelUtilAntesProtecao = utilAcel;
+
+  if (!PROTECAO_QUEDA_ACEL) return utilAcel;
+
+  long quedaMinima = (CARGA_MAX_ACEL * QUEDA_BRUSCA_ACEL_PERCENT) / 100;
+  long minimoProtegido = (CARGA_MAX_ACEL * ACEL_MIN_PROTECAO_PERCENT) / 100;
+  bool quedaBrusca = ultimoAcelAceito > minimoProtegido &&
+                     utilAcel + quedaMinima < ultimoAcelAceito;
+
+  if (quedaBrusca) {
+    leiturasQueda++;
+    if (leiturasQueda < CONFIRMACOES_QUEDA_ACEL) {
+      acelProtecaoAtiva = true;
+      return ultimoAcelAceito;
+    }
+  } else {
+    leiturasQueda = 0;
+  }
+
+  ultimoAcelAceito = utilAcel;
+  return utilAcel;
+}
+
+// ============================================================
 void aprendeMaximos(long utilFreio, long utilAcel, long utilEmbr) {
   if (utilFreio > maxAprendidoFreio) maxAprendidoFreio = utilFreio;
   if (utilAcel  > maxAprendidoAcel)  maxAprendidoAcel  = utilAcel;
   if (utilEmbr  > maxAprendidoEmbr)  maxAprendidoEmbr  = utilEmbr;
+}
+
+// ============================================================
+void limpaMaximosAprendidos() {
+  maxAprendidoFreio = 0;
+  maxAprendidoAcel  = 0;
+  maxAprendidoEmbr  = 0;
+  Serial.println("Maximos aprendidos limpos. Pise os pedais e segure 3s para salvar.");
 }
 
 // ============================================================
@@ -280,7 +398,9 @@ void trataBotaoCalibracao() {
     if (botaoPressionado) {
       inicioPressionado = agora;
       salvouNesteAperto = false;
-      Serial.println("Segure o botao por 3s para salvar a calibracao.");
+      Serial.println("Toque curto limpa maximos. Segure 3s para salvar.");
+    } else if (!salvouNesteAperto) {
+      limpaMaximosAprendidos();
     }
   }
 
@@ -302,29 +422,44 @@ void loop() {
   // mantemos a ultima leitura e nao repetimos valor dentro do filtro.
   if (scFreio.is_ready()) {
     brutoFreio = scFreio.read_average(1) - scFreio.get_offset();
-    filtFreio = mediaMovel(bufFreio, &idxFreio, brutoFreio);
+    filtFreio = FILTRO_FREIO ? mediaMovel(bufFreio, &idxFreio, brutoFreio) : brutoFreio;
   }
   if (scAcel.is_ready()) {
     brutoAcel = scAcel.read_average(1) - scAcel.get_offset();
-    filtAcel = mediaMovel(bufAcel, &idxAcel, brutoAcel);
+    filtAcel = FILTRO_ACEL ? mediaMovel(bufAcel, &idxAcel, brutoAcel) : brutoAcel;
   }
   if (scEmbr.is_ready()) {
     brutoEmbr = scEmbr.read_average(1) - scEmbr.get_offset();
-    filtEmbr = mediaMovel(bufEmbr, &idxEmbr, brutoEmbr);
+    filtEmbr = FILTRO_EMBR ? mediaMovel(bufEmbr, &idxEmbr, brutoEmbr) : brutoEmbr;
   }
 
   long utilFreio = aplicaZonaMorta(filtFreio, ZONA_MORTA_FREIO);
   long utilAcel  = aplicaZonaMorta(filtAcel,  ZONA_MORTA_ACEL);
   long utilEmbr  = aplicaZonaMorta(filtEmbr,  ZONA_MORTA_EMBR);
+  utilAcel = protegeQuedaAcel(utilAcel);
   aprendeMaximos(utilFreio, utilAcel, utilEmbr);
 
-  // PWM proporcional
-  int pwmFreio = calcPWM(utilFreio, CARGA_MAX_FREIO, PWM_MAX_FREIO);
-  int pwmAcel  = calcPWM(utilAcel,  CARGA_MAX_ACEL,  PWM_MAX_ACEL);
-  int pwmEmbr  = calcPWM(utilEmbr,  CARGA_MAX_EMBR,  PWM_MAX_EMBR);
   int pctFreio = calcPct(utilFreio, CARGA_MAX_FREIO);
   int pctAcel  = calcPct(utilAcel,  CARGA_MAX_ACEL);
   int pctEmbr  = calcPct(utilEmbr,  CARGA_MAX_EMBR);
+  int pctFreioCurva = aplicaCurvaPct(pctFreio, CURVA_FREIO_PERCENT);
+  int pctAcelCurva  = aplicaCurvaPct(pctAcel,  CURVA_ACEL_PERCENT);
+  int pctEmbrCurva  = aplicaCurvaPct(pctEmbr,  CURVA_EMBR_PERCENT);
+
+  // PWM proporcional com curva opcional por pedal.
+  int pwmFreio = calcPWMDePct(pctFreioCurva, PWM_MAX_FREIO);
+  int pwmAcel  = calcPWMDePct(pctAcelCurva,  PWM_MAX_ACEL);
+  int pwmEmbr  = calcPWMDePct(pctEmbrCurva,  PWM_MAX_EMBR);
+
+  if (TESTE_SAIDA_ACEL) {
+    if (TESTE_SAIDA_ACEL_DEGRAUS) {
+      pctAcel = pctTesteDegraus(TESTE_SAIDA_DEGRAU_MS);
+    } else {
+      pctAcel = pctTesteTriangular(TESTE_SAIDA_PERIODO_MS);
+    }
+    pctAcelCurva = pctAcel;
+    pwmAcel = calcPWMDePct(pctAcelCurva, PWM_MAX_ACEL_TESTE);
+  }
 
   analogWrite(PWM_FREIO, pwmFreio);
   analogWrite(PWM_ACEL,  pwmAcel);
@@ -337,6 +472,7 @@ void loop() {
   static long ultFiltFreio = 0, ultFiltAcel = 0, ultFiltEmbr = 0;
   static long ultUtilFreio = 0, ultUtilAcel = 0, ultUtilEmbr = 0;
   static int ultPctFreio = 0, ultPctAcel = 0, ultPctEmbr = 0;
+  static int ultOutFreio = 0, ultOutAcel = 0, ultOutEmbr = 0;
   static int ultPwmFreio = 0, ultPwmAcel = 0, ultPwmEmbr = 0;
 
   bool houveMudanca = primeiroLog;
@@ -360,10 +496,18 @@ void loop() {
     houveMudanca |= pctAcel  != ultPctAcel;
     houveMudanca |= pctEmbr  != ultPctEmbr;
   }
+  if (LOG_OUT) {
+    houveMudanca |= pctFreioCurva != ultOutFreio;
+    houveMudanca |= pctAcelCurva  != ultOutAcel;
+    houveMudanca |= pctEmbrCurva  != ultOutEmbr;
+  }
   if (LOG_PWM) {
     houveMudanca |= pwmFreio != ultPwmFreio;
     houveMudanca |= pwmAcel  != ultPwmAcel;
     houveMudanca |= pwmEmbr  != ultPwmEmbr;
+  }
+  if (LOG_PROT_ACEL) {
+    houveMudanca |= acelProtecaoAtiva;
   }
 
   if (houveMudanca) {
@@ -372,6 +516,7 @@ void loop() {
     if (LOG_FILT)  { Serial.print(" filt:");  Serial.print(filtFreio); }
     if (LOG_UTIL)  { Serial.print(" util:");  Serial.print(utilFreio); }
     if (LOG_PCT)   { Serial.print(" pct:");   Serial.print(pctFreio); }
+    if (LOG_OUT)   { Serial.print(" out:");   Serial.print(pctFreioCurva); }
     if (LOG_PWM)   { Serial.print(" pwm:");   Serial.print(pwmFreio); }
 
     Serial.print(" | ACEL");
@@ -379,13 +524,20 @@ void loop() {
     if (LOG_FILT)  { Serial.print(" filt:");  Serial.print(filtAcel); }
     if (LOG_UTIL)  { Serial.print(" util:");  Serial.print(utilAcel); }
     if (LOG_PCT)   { Serial.print(" pct:");   Serial.print(pctAcel); }
+    if (LOG_OUT)   { Serial.print(" out:");   Serial.print(pctAcelCurva); }
     if (LOG_PWM)   { Serial.print(" pwm:");   Serial.print(pwmAcel); }
+    if (LOG_PROT_ACEL && acelProtecaoAtiva) {
+      Serial.print(" raw:");
+      Serial.print(acelUtilAntesProtecao);
+      Serial.print(" prot:1");
+    }
 
     Serial.print(" | EMBR");
     if (LOG_BRUTO) { Serial.print(" bruto:"); Serial.print(brutoEmbr); }
     if (LOG_FILT)  { Serial.print(" filt:");  Serial.print(filtEmbr); }
     if (LOG_UTIL)  { Serial.print(" util:");  Serial.print(utilEmbr); }
     if (LOG_PCT)   { Serial.print(" pct:");   Serial.print(pctEmbr); }
+    if (LOG_OUT)   { Serial.print(" out:");   Serial.print(pctEmbrCurva); }
     if (LOG_PWM)   { Serial.print(" pwm:");   Serial.print(pwmEmbr); }
     Serial.println();
 
@@ -402,11 +554,14 @@ void loop() {
     ultPctFreio = pctFreio;
     ultPctAcel  = pctAcel;
     ultPctEmbr  = pctEmbr;
+    ultOutFreio = pctFreioCurva;
+    ultOutAcel  = pctAcelCurva;
+    ultOutEmbr  = pctEmbrCurva;
     ultPwmFreio = pwmFreio;
     ultPwmAcel  = pwmAcel;
     ultPwmEmbr  = pwmEmbr;
   }
 #endif
 
-  delay(5);
+  delay(0);
 }
