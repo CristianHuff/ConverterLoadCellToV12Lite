@@ -52,6 +52,7 @@ HX711 x3 -> Arduino Nano -> PWM em alta frequencia -> filtro RC -> divisor -> RJ
 | PWM acelerador | D10 |
 | PWM embreagem | D11 |
 | Botao calibracao | D8 para GND |
+| LED status | D12 via resistor para GND |
 
 ### RJ45 PXN
 
@@ -72,6 +73,11 @@ O firmware zera os pedais ao ligar, entao ligue com todos soltos. O botao de cal
 
 - toque curto: limpa maximos aprendidos em RAM;
 - segurar por 3 segundos: salva na EEPROM os maximos aprendidos.
+
+LED de status opcional no D12:
+
+- 1 piscada: maximos aprendidos limpos;
+- 3 piscadas: calibracao salva na EEPROM.
 
 Depois de limpar, pise cada pedal ate o maximo desejado e segure o botao por 3 segundos para salvar. Os ajustes `AJUSTE_MAX_*_PERCENT` permitem aplicar margem no maximo salvo.
 

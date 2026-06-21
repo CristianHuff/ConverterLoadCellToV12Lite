@@ -10,6 +10,20 @@ D8 Arduino ---- botao ---- GND
 
 O firmware usa `INPUT_PULLUP`, entao nao precisa resistor externo.
 
+## LED de Status
+
+Opcionalmente, ligue um LED no D12:
+
+```text
+D12 -> resistor 220 ohm a 1 k -> anodo LED
+catodo LED -> GND
+```
+
+Indicacoes:
+
+- 1 piscada: maximos aprendidos limpos;
+- 3 piscadas: calibracao salva na EEPROM.
+
 ## Inicializacao
 
 Ao ligar:

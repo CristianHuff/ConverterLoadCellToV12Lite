@@ -22,6 +22,7 @@ O firmware faz quatro coisas principais:
 | PWM freio | D9 |
 | PWM acelerador | D10 |
 | PWM embreagem | D11 |
+| LED status | D12 via resistor para GND |
 
 ## PWM
 
@@ -45,6 +46,22 @@ A estrutura `DadosCalibracao` salva os maximos dos tres pedais na EEPROM com ass
 - `maxEmbr`
 
 Na inicializacao, se os dados forem validos e acima dos minimos plausiveis, o firmware usa esses valores. Caso contrario, usa os valores padrao no codigo.
+
+## LED de Status
+
+O LED de status fica no D12 e usa piscadas nao bloqueantes:
+
+| Evento | Padrao |
+|--------|--------|
+| Limpar maximos aprendidos | 1 piscada |
+| Salvar calibracao na EEPROM | 3 piscadas |
+
+Ligacao recomendada:
+
+```text
+D12 -> resistor 220 ohm a 1 k -> anodo LED
+catodo LED -> GND
+```
 
 ## Ajuste de Maximo
 

@@ -8,6 +8,8 @@
 | 3 | Modulo HX711 | Um por pedal |
 | 3 | Celula de carga dos pedais | Ja existentes nos Sim Ruito |
 | 1 | Botao momentaneo | Calibracao |
+| 1 | LED | Status de calibracao |
+| 1 | Resistor 220 ohm a 1 k | Serie do LED |
 
 ## Filtro e Saida Analogica
 

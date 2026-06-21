@@ -23,6 +23,9 @@
 // Botao entre o pino 8 e GND. Usa pull-up interno do Arduino.
 #define PINO_BOTAO_CALIB 8
 
+// LED de status: anodo no D12 via resistor, catodo no GND.
+#define PINO_LED_STATUS 12
+
 // ── Instâncias HX711 ────────────────────────────────────────
 HX711 scFreio;
 HX711 scAcel;
@@ -132,6 +135,39 @@ struct DadosCalibracao {
 bool acelProtecaoAtiva = false;
 long acelUtilAntesProtecao = 0;
 
+byte ledPiscadasPendentes = 0;
+bool ledStatusLigado = false;
+unsigned long ledStatusProximaMudanca = 0;
+const unsigned long LED_STATUS_TEMPO_LIGADO_MS = 120;
+const unsigned long LED_STATUS_TEMPO_DESLIGADO_MS = 160;
+
+// ============================================================
+void agendaPiscadasStatus(byte quantidade) {
+  ledPiscadasPendentes = quantidade;
+  ledStatusLigado = false;
+  ledStatusProximaMudanca = 0;
+  digitalWrite(PINO_LED_STATUS, LOW);
+}
+
+// ============================================================
+void atualizaLedStatus() {
+  if (ledPiscadasPendentes == 0) return;
+
+  unsigned long agora = millis();
+  if (ledStatusProximaMudanca != 0 && agora < ledStatusProximaMudanca) return;
+
+  if (!ledStatusLigado) {
+    digitalWrite(PINO_LED_STATUS, HIGH);
+    ledStatusLigado = true;
+    ledStatusProximaMudanca = agora + LED_STATUS_TEMPO_LIGADO_MS;
+  } else {
+    digitalWrite(PINO_LED_STATUS, LOW);
+    ledStatusLigado = false;
+    ledPiscadasPendentes--;
+    ledStatusProximaMudanca = agora + LED_STATUS_TEMPO_DESLIGADO_MS;
+  }
+}
+
 // ============================================================
 long ajustaMaximo(long valor, int ajustePercent) {
   long ajustado = (valor * ajustePercent) / 100;
@@ -195,6 +231,7 @@ void salvarCalibracao() {
   };
 
   EEPROM.put(0, dados);
+  agendaPiscadasStatus(3);
   Serial.print("Calibracao salva. Maximos: FREIO ");
   Serial.print(CARGA_MAX_FREIO);
   Serial.print(" | ACEL ");
@@ -207,6 +244,8 @@ void salvarCalibracao() {
 void setup() {
   Serial.begin(115200);
   pinMode(PINO_BOTAO_CALIB, INPUT_PULLUP);
+  pinMode(PINO_LED_STATUS, OUTPUT);
+  digitalWrite(PINO_LED_STATUS, LOW);
   carregarCalibracao();
 
   // Timer1 → pinos 9 e 10 em ~62kHz
@@ -372,6 +411,7 @@ void limpaMaximosAprendidos() {
   maxAprendidoFreio = 0;
   maxAprendidoAcel  = 0;
   maxAprendidoEmbr  = 0;
+  agendaPiscadasStatus(1);
   Serial.println("Maximos aprendidos limpos. Pise os pedais e segure 3s para salvar.");
 }
 
@@ -465,6 +505,7 @@ void loop() {
   analogWrite(PWM_ACEL,  pwmAcel);
   analogWrite(PWM_EMBR,  pwmEmbr);
   trataBotaoCalibracao();
+  atualizaLedStatus();
 
 #ifdef CALIBRACAO
   static bool primeiroLog = true;
