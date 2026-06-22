@@ -1,112 +1,112 @@
 # ConverterLoadCellToV12Lite
 
-Conversor experimental para usar pedais Sim Ruito com celulas de carga em uma base PXN, expondo para a base sinais analogicos parecidos com os pedais originais. A base PXN faz a ponte USB para o PS5.
+Experimental converter for using Sim Ruito load-cell pedals with a PXN wheel base, exposing analog signals similar to the original PXN pedals. The PXN base acts as the USB bridge to the PS5.
 
-O projeto ainda esta em fase de prototipo em protoboard. A leitura dos pedais e a saida analogica ja foram validadas em testes, mas a montagem final em placa soldada ainda precisa ser feita e revalidada.
+The project is still in the breadboard prototype stage. Pedal reading and analog output have been validated in tests, but the final soldered board still needs to be built and revalidated.
 
-## Visao Geral
+## Overview
 
 ```text
-Pedais Sim Ruito
-   | RJ9 / celulas de carga
+Sim Ruito pedals
+   | RJ9 / load cells
    v
-HX711 x3 -> Arduino Nano -> PWM em alta frequencia -> filtro RC -> divisor -> RJ45 PXN
-                                                                       |
-                                                                       v
-                                                                  Base PXN -> PS5
+HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ45
+                                                                           |
+                                                                           v
+                                                                      PXN base -> PS5
 ```
 
-## Status Atual
+## Current Status
 
-- Leitura dos 3 pedais via HX711 funcionando.
-- Saidas analogicas aceitas pela base PXN.
-- Pino 2 do RJ45 confirmado como GND/retorno na base testada.
-- Calibracao automatica com botao e persistencia na EEPROM.
-- Margem de maximo por pedal para nao precisar esmagar os pedais.
-- Protecao curta contra dropout no acelerador.
-- Modo de teste de saida do acelerador por rampa/degraus para diagnostico.
-- Testado em protoboard; a placa final ainda precisa melhorar GND, filtros e desacoplamento.
+- All 3 pedals are read through HX711 modules.
+- Analog outputs are accepted by the PXN base.
+- RJ45 pin 2 was confirmed as GND/return on the tested base.
+- Automatic calibration with a button and EEPROM persistence.
+- Per-pedal maximum margin so the pedals do not need to be crushed.
+- Short dropout protection for the throttle.
+- Throttle output ramp/step test mode for diagnostics.
+- Tested on a breadboard; the final board still needs better GND, filters, and decoupling.
 
-## Hardware Principal
+## Main Hardware
 
-| Item | Uso |
+| Item | Use |
 |------|-----|
-| Arduino Nano | Processa leituras e gera PWM |
-| 3x HX711 | Leitura das celulas de carga |
-| 3x filtro RC | Converte PWM em tensao analogica aproximada |
-| 3x divisor de tensao | Reduz faixa de 5 V para faixa segura da PXN |
-| RJ9 | Entrada dos pedais Sim Ruito |
-| RJ45 | Saida analogica para a base PXN |
-| Botao momentaneo | Limpa/salva calibracao |
+| Arduino Nano | Processes readings and generates PWM |
+| 3x HX711 | Reads the load cells |
+| 3x RC filter | Converts PWM into an approximate analog voltage |
+| 3x voltage divider | Reduces the 5 V range to a PXN-safe range |
+| RJ9 | Sim Ruito pedal input |
+| RJ45 | Analog output to the PXN base |
+| Momentary button | Clears/saves calibration |
 
-## Mapeamento Rapido
+## Quick Pinout
 
 ### Arduino
 
-| Funcao | Pinos |
-|--------|-------|
-| HX711 freio | D2 DATA, D3 SCK |
-| HX711 acelerador | D4 DATA, D5 SCK |
-| HX711 embreagem | D6 DATA, D7 SCK |
-| PWM freio | D9 |
-| PWM acelerador | D10 |
-| PWM embreagem | D11 |
-| Botao calibracao | D8 para GND |
-| LED status | D12 via resistor para GND |
+| Function | Pins |
+|----------|------|
+| HX711 brake | D2 DATA, D3 SCK |
+| HX711 throttle | D4 DATA, D5 SCK |
+| HX711 clutch | D6 DATA, D7 SCK |
+| Brake PWM | D9 |
+| Throttle PWM | D10 |
+| Clutch PWM | D11 |
+| Calibration button | D8 to GND |
+| Status LED | D12 through resistor to GND |
 
-### RJ45 PXN
+### PXN RJ45
 
-| Pino | Funcao |
-|------|--------|
-| 1 | Embreagem |
-| 2 | GND/retorno |
+| Pin | Function |
+|-----|----------|
+| 1 | Clutch |
+| 2 | GND/return |
 | 3 | GND |
-| 4 | Freio |
+| 4 | Brake |
 | 5 | GND |
-| 6 | Acelerador |
-| 7 | VREF 3,3 V, nao usar como VCC |
-| 8 | VREF 3,3 V, nao usar como VCC |
+| 6 | Throttle |
+| 7 | 3.3 V VREF, do not use as VCC |
+| 8 | 3.3 V VREF, do not use as VCC |
 
-## Calibracao
+## Calibration
 
-O firmware zera os pedais ao ligar, entao ligue com todos soltos. O botao de calibracao fica entre D8 e GND:
+The firmware tares the pedals at startup, so power it on with all pedals released. The calibration button is wired between D8 and GND:
 
-- toque curto: limpa maximos aprendidos em RAM;
-- segurar por 3 segundos: salva na EEPROM os maximos aprendidos.
+- short press: clears learned maximums in RAM;
+- hold for 3 seconds: saves learned maximums to EEPROM.
 
-LED de status opcional no D12:
+Optional status LED on D12:
 
-- 1 piscada: maximos aprendidos limpos;
-- 3 piscadas: calibracao salva na EEPROM.
+- 1 blink: learned maximums cleared;
+- 3 blinks: calibration saved to EEPROM.
 
-Depois de limpar, pise cada pedal ate o maximo desejado e segure o botao por 3 segundos para salvar. Os ajustes `AJUSTE_MAX_*_PERCENT` permitem aplicar margem no maximo salvo.
+After clearing, press each pedal to the desired maximum and hold the button for 3 seconds to save. The `MAX_ADJUST_*_PERCENT` settings apply a margin to the saved maximum.
 
-## Diagnostico
+## Diagnostics
 
-O firmware tem flags de log (`LOG_UTIL`, `LOG_PCT`, `LOG_PWM`, etc.) e um modo de teste eletrico:
+The firmware has log flags (`LOG_USEFUL`, `LOG_PCT`, `LOG_PWM`, etc.) and an electrical test mode:
 
 ```cpp
-const bool TESTE_SAIDA_ACEL = false;
+const bool TEST_THROTTLE_OUTPUT = false;
 ```
 
-Quando ligado, ele ignora o HX711 do acelerador e gera degraus/rampa no PWM do acelerador. Isso ajuda a separar problema de leitura do pedal de problema na saida analogica para a base.
+When enabled, it ignores the throttle HX711 and generates steps/a ramp on the throttle PWM output. This helps separate pedal-reading problems from analog-output problems at the base.
 
-## Documentacao
+## Documentation
 
-| Arquivo | Conteudo |
-|---------|----------|
-| [docs/01_visao_geral.md](docs/01_visao_geral.md) | Arquitetura e estado do projeto |
-| [docs/02_mapeamento_rj45_pxn.md](docs/02_mapeamento_rj45_pxn.md) | Engenharia reversa da base PXN |
-| [docs/03_mapeamento_rj9_pedais.md](docs/03_mapeamento_rj9_pedais.md) | Mapeamento dos pedais Sim Ruito |
-| [docs/04_esquema_eletrico.md](docs/04_esquema_eletrico.md) | Circuito por canal |
-| [docs/05_codigo_arduino.md](docs/05_codigo_arduino.md) | Firmware e flags |
-| [docs/06_calibracao.md](docs/06_calibracao.md) | Procedimento de calibracao |
-| [docs/07_lista_componentes.md](docs/07_lista_componentes.md) | Lista de componentes |
-| [docs/08_testes_diagnostico.md](docs/08_testes_diagnostico.md) | Testes feitos e como repetir |
+| File | Contents |
+|------|----------|
+| [docs/01_overview.md](docs/01_overview.md) | Architecture and project state |
+| [docs/02_pxn_rj45_pinout.md](docs/02_pxn_rj45_pinout.md) | Reverse engineering of the PXN base |
+| [docs/03_pedal_rj9_pinout.md](docs/03_pedal_rj9_pinout.md) | Sim Ruito pedal pinout |
+| [docs/04_electrical_schematic.md](docs/04_electrical_schematic.md) | Per-channel circuit |
+| [docs/05_arduino_firmware.md](docs/05_arduino_firmware.md) | Firmware and flags |
+| [docs/06_calibration.md](docs/06_calibration.md) | Calibration procedure |
+| [docs/07_component_list.md](docs/07_component_list.md) | Component list |
+| [docs/08_tests_and_diagnostics.md](docs/08_tests_and_diagnostics.md) | Completed tests and how to repeat them |
 
-## Avisos
+## Warnings
 
-- Nao injete 5 V diretamente nos sinais da PXN.
-- Pinos 7 e 8 do RJ45 sao referencia de 3,3 V da base, nao alimentacao.
-- Protoboard pode gerar mau contato, ripple e problemas de GND. A placa final deve usar trilhas curtas, GND bem distribuido e capacitores proximos dos HX711/filtros.
-- Este projeto e experimental. Valide tensoes com multimetro antes de ligar na base.
+- Do not inject 5 V directly into PXN signal pins.
+- RJ45 pins 7 and 8 are the base 3.3 V reference, not a power supply.
+- Breadboards can cause bad contacts, ripple, and GND issues. The final board should use short traces, a well-distributed GND, and capacitors close to the HX711 modules and filters.
+- This project is experimental. Validate voltages with a multimeter before connecting it to the base.
