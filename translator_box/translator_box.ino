@@ -8,12 +8,12 @@
 #include <EEPROM.h>
 
 // HX711 pins
-#define BRAKE_DT      2
-#define BRAKE_SCK     3
-#define THROTTLE_DT       4
-#define THROTTLE_SCK      5
-#define CLUTCH_DT       6
-#define CLUTCH_SCK      7
+#define BRAKE_DT      3
+#define BRAKE_SCK     2
+#define THROTTLE_DT   5
+#define THROTTLE_SCK  4
+#define CLUTCH_DT     7
+#define CLUTCH_SCK    6
 
 // Output PWM pins
 #define PWM_BRAKE     9
@@ -57,13 +57,32 @@ const int PWM_MAX_BRAKE = 204;
 const int PWM_MAX_THROTTLE  = 194;
 const int PWM_MAX_CLUTCH  = 193;
 
-// Response curve per pedal:
+// Base response curve per pedal:
 // 0 = linear.
 // Positive = more response at the start/middle of travel.
 // Negative = softer response at the start/middle of travel.
+// The active pedal profile can add its own curve after this base curve.
 const int CURVE_BRAKE_PERCENT = 0;
 const int CURVE_THROTTLE_PERCENT  = 0;
 const int CURVE_CLUTCH_PERCENT  = 0;
+
+// Pedal profiles.
+// Profile 1 keeps all pedals linear.
+// Profile 2 keeps brake/clutch linear and applies a GT7 inverse curve to throttle.
+enum PedalProfile {
+  PROFILE_LINEAR = 0,
+  PROFILE_GT7 = 1,
+  PROFILE_COUNT = 2
+};
+
+byte activeProfile = PROFILE_LINEAR;
+
+const char PROFILE_LINEAR_NAME[] = "Linear / PC";
+const char PROFILE_GT7_NAME[] = "GT7 inverse throttle";
+
+const byte GT7_THROTTLE_POINT_COUNT = 5;
+const byte GT7_THROTTLE_INPUT[GT7_THROTTLE_POINT_COUNT] = {0, 25, 50, 75, 100};
+const byte GT7_THROTTLE_OUTPUT[GT7_THROTTLE_POINT_COUNT] = {0, 45, 75, 90, 100};
 
 // Dead zone in raw HX711 counts.
 // Small values near zero are normal noise, especially with disconnected inputs.
@@ -118,13 +137,16 @@ const unsigned long TEST_OUTPUT_STEP_MS = 2500;
 // Tolerance for considering HX711 values truly changed.
 const long LOG_DELTA_HX711 = 100;
 
-const unsigned long HOLD_TO_SAVE_MS = 3000;
+const unsigned long QUICK_PRESS_MAX_MS = 600;
+const unsigned long BUTTON_COMBO_WINDOW_MS = 900;
+const unsigned long HOLD_TO_CLEAR_MS = 3000;
+const unsigned long HOLD_TO_SAVE_MS = 6000;
 const unsigned long BUTTON_DEBOUNCE_MS = 40;
 
 const unsigned long EEPROM_SIGNATURE = 0xC4112026;
-const int EEPROM_VERSION = 1;
+const int EEPROM_VERSION = 2;
 
-struct CalibrationData {
+struct CalibrationDataV1 {
   unsigned long signature;
   int version;
   long maxBrake;
@@ -132,25 +154,72 @@ struct CalibrationData {
   long maxClutch;
 };
 
+struct CalibrationData {
+  unsigned long signature;
+  int version;
+  long maxBrake;
+  long maxThrottle;
+  long maxClutch;
+  byte activeProfile;
+  byte reserved[3];
+};
+
 bool throttleProtectionActive = false;
 long throttleUsefulBeforeProtection = 0;
 
 byte pendingStatusBlinks = 0;
 bool statusLedOn = false;
+bool statusLedForcedOn = false;
 unsigned long nextStatusLedChange = 0;
-const unsigned long STATUS_LED_ON_MS = 120;
-const unsigned long STATUS_LED_OFF_MS = 160;
+unsigned int statusLedOnMs = 120;
+unsigned int statusLedOffMs = 160;
+const unsigned int STATUS_LED_SHORT_ON_MS = 120;
+const unsigned int STATUS_LED_SHORT_OFF_MS = 160;
+const unsigned int STATUS_LED_LONG_ON_MS = 260;
+const unsigned int STATUS_LED_LONG_OFF_MS = 220;
 
 // ============================================================
-void scheduleStatusBlinks(byte count) {
+void scheduleStatusBlinks(byte count, unsigned int onMs, unsigned int offMs) {
+  statusLedForcedOn = false;
   pendingStatusBlinks = count;
   statusLedOn = false;
   nextStatusLedChange = 0;
+  statusLedOnMs = onMs;
+  statusLedOffMs = offMs;
   digitalWrite(STATUS_LED_PIN, LOW);
 }
 
 // ============================================================
+void scheduleShortStatusBlinks(byte count) {
+  scheduleStatusBlinks(count, STATUS_LED_SHORT_ON_MS, STATUS_LED_SHORT_OFF_MS);
+}
+
+// ============================================================
+void scheduleLongStatusBlinks(byte count) {
+  scheduleStatusBlinks(count, STATUS_LED_LONG_ON_MS, STATUS_LED_LONG_OFF_MS);
+}
+
+// ============================================================
+void setStatusLedForcedOn(bool enabled) {
+  statusLedForcedOn = enabled;
+  if (enabled) {
+    pendingStatusBlinks = 0;
+    statusLedOn = true;
+    nextStatusLedChange = 0;
+    digitalWrite(STATUS_LED_PIN, HIGH);
+  } else {
+    statusLedOn = false;
+    nextStatusLedChange = 0;
+    digitalWrite(STATUS_LED_PIN, LOW);
+  }
+}
+
+// ============================================================
 void updateStatusLed() {
+  if (statusLedForcedOn) {
+    digitalWrite(STATUS_LED_PIN, HIGH);
+    return;
+  }
   if (pendingStatusBlinks == 0) return;
 
   unsigned long now = millis();
@@ -159,12 +228,12 @@ void updateStatusLed() {
   if (!statusLedOn) {
     digitalWrite(STATUS_LED_PIN, HIGH);
     statusLedOn = true;
-    nextStatusLedChange = now + STATUS_LED_ON_MS;
+    nextStatusLedChange = now + statusLedOnMs;
   } else {
     digitalWrite(STATUS_LED_PIN, LOW);
     statusLedOn = false;
     pendingStatusBlinks--;
-    nextStatusLedChange = now + STATUS_LED_OFF_MS;
+    nextStatusLedChange = now + statusLedOffMs;
   }
 }
 
@@ -176,27 +245,93 @@ long adjustMaximum(long value, int adjustPercent) {
 }
 
 // ============================================================
+bool calibrationMaximumsAreValid(long maxBrake, long maxThrottle, long maxClutch) {
+  return maxBrake > CALIB_MIN_BRAKE &&
+         maxThrottle > CALIB_MIN_THROTTLE &&
+         maxClutch > CALIB_MIN_CLUTCH;
+}
+
+// ============================================================
+const char* activeProfileName() {
+  if (activeProfile == PROFILE_GT7) return PROFILE_GT7_NAME;
+  return PROFILE_LINEAR_NAME;
+}
+
+// ============================================================
+void saveSettings() {
+  CalibrationData data = {
+    EEPROM_SIGNATURE,
+    EEPROM_VERSION,
+    MAX_LOAD_BRAKE,
+    MAX_LOAD_THROTTLE,
+    MAX_LOAD_CLUTCH,
+    activeProfile,
+    {0, 0, 0}
+  };
+
+  EEPROM.put(0, data);
+}
+
+// ============================================================
+void printActiveProfile() {
+  Serial.print("Active pedal profile ");
+  Serial.print(activeProfile + 1);
+  Serial.print(": ");
+  Serial.println(activeProfileName());
+}
+
+// ============================================================
+void applyQuickProfileClicks(byte clickCount) {
+  if (clickCount == 0) return;
+
+  activeProfile = (activeProfile + clickCount) % PROFILE_COUNT;
+  scheduleShortStatusBlinks(activeProfile + 1);
+  printActiveProfile();
+}
+
+// ============================================================
 void loadCalibration() {
   CalibrationData data;
   EEPROM.get(0, data);
 
   if (data.signature == EEPROM_SIGNATURE &&
       data.version == EEPROM_VERSION &&
-      data.maxBrake > CALIB_MIN_BRAKE &&
-      data.maxThrottle  > CALIB_MIN_THROTTLE &&
-      data.maxClutch  > CALIB_MIN_CLUTCH)
+      calibrationMaximumsAreValid(data.maxBrake, data.maxThrottle, data.maxClutch))
   {
     MAX_LOAD_BRAKE = data.maxBrake;
     MAX_LOAD_THROTTLE  = data.maxThrottle;
     MAX_LOAD_CLUTCH  = data.maxClutch;
+    activeProfile = data.activeProfile < PROFILE_COUNT ? data.activeProfile : PROFILE_LINEAR;
     Serial.print("Calibration loaded from EEPROM. Maximums: BRAKE ");
     Serial.print(MAX_LOAD_BRAKE);
     Serial.print(" | THROTTLE ");
     Serial.print(MAX_LOAD_THROTTLE);
     Serial.print(" | CLUTCH ");
     Serial.println(MAX_LOAD_CLUTCH);
+    printActiveProfile();
+    return;
+  }
+
+  CalibrationDataV1 oldData;
+  EEPROM.get(0, oldData);
+  if (oldData.signature == EEPROM_SIGNATURE &&
+      oldData.version == 1 &&
+      calibrationMaximumsAreValid(oldData.maxBrake, oldData.maxThrottle, oldData.maxClutch))
+  {
+    MAX_LOAD_BRAKE = oldData.maxBrake;
+    MAX_LOAD_THROTTLE  = oldData.maxThrottle;
+    MAX_LOAD_CLUTCH  = oldData.maxClutch;
+    activeProfile = PROFILE_LINEAR;
+    Serial.print("Calibration loaded from EEPROM v1. It will migrate when calibration is saved. Maximums: BRAKE ");
+    Serial.print(MAX_LOAD_BRAKE);
+    Serial.print(" | THROTTLE ");
+    Serial.print(MAX_LOAD_THROTTLE);
+    Serial.print(" | CLUTCH ");
+    Serial.println(MAX_LOAD_CLUTCH);
+    printActiveProfile();
   } else {
     Serial.println("No valid calibration in EEPROM. Using default values.");
+    printActiveProfile();
   }
 }
 
@@ -222,16 +357,8 @@ void saveCalibration() {
     return;
   }
 
-  CalibrationData data = {
-    EEPROM_SIGNATURE,
-    EEPROM_VERSION,
-    MAX_LOAD_BRAKE,
-    MAX_LOAD_THROTTLE,
-    MAX_LOAD_CLUTCH
-  };
-
-  EEPROM.put(0, data);
-  scheduleStatusBlinks(3);
+  saveSettings();
+  scheduleLongStatusBlinks(3);
   Serial.print("Calibration saved. Maximums: BRAKE ");
   Serial.print(MAX_LOAD_BRAKE);
   Serial.print(" | THROTTLE ");
@@ -285,6 +412,7 @@ void setup() {
   memset(bufferClutch,  0, sizeof(bufferClutch));
 
   Serial.println("System ready.");
+  scheduleShortStatusBlinks(activeProfile + 1);
 
 #ifdef CALIBRATION
   Serial.println("== CALIBRATION MODE ==");
@@ -331,6 +459,34 @@ int applyCurvePct(int pct, int curvePercent) {
 
   if (pct < 0) pct = 0;
   if (pct > 100) pct = 100;
+  return pct;
+}
+
+// ============================================================
+int applyCurveTablePct(int pct, const byte* inputPoints, const byte* outputPoints, byte pointCount) {
+  if (pct <= inputPoints[0]) return outputPoints[0];
+  if (pct >= inputPoints[pointCount - 1]) return outputPoints[pointCount - 1];
+
+  for (byte i = 1; i < pointCount; i++) {
+    if (pct <= inputPoints[i]) {
+      int inputLow = inputPoints[i - 1];
+      int inputHigh = inputPoints[i];
+      int outputLow = outputPoints[i - 1];
+      int outputHigh = outputPoints[i];
+      long numerator = (long)(pct - inputLow) * (outputHigh - outputLow);
+      return outputLow + numerator / (inputHigh - inputLow);
+    }
+  }
+
+  return pct;
+}
+
+// ============================================================
+int applyThrottleProfilePct(int pct) {
+  if (activeProfile == PROFILE_GT7) {
+    return applyCurveTablePct(pct, GT7_THROTTLE_INPUT, GT7_THROTTLE_OUTPUT, GT7_THROTTLE_POINT_COUNT);
+  }
+
   return pct;
 }
 
@@ -411,17 +567,19 @@ void clearLearnedMaximums() {
   learnedMaxBrake = 0;
   learnedMaxThrottle  = 0;
   learnedMaxClutch  = 0;
-  scheduleStatusBlinks(1);
-  Serial.println("Learned maximums cleared. Press the pedals and hold 3s to save.");
+  scheduleLongStatusBlinks(1);
+  Serial.println("Learned maximums cleared. Press the pedals and use quick click + 6s hold to save.");
 }
 
 // ============================================================
 void handleCalibrationButton() {
   static bool previousReading = false;
   static bool buttonPressed = false;
-  static bool savedDuringThisPress = false;
+  static bool comboHoldPress = false;
   static unsigned long lastChange = 0;
   static unsigned long pressStart = 0;
+  static unsigned long lastQuickRelease = 0;
+  static bool profileClickPending = false;
 
   unsigned long now = millis();
   bool currentReading = digitalRead(CAL_BUTTON_PIN) == LOW;
@@ -433,23 +591,46 @@ void handleCalibrationButton() {
 
   if ((now - lastChange) < BUTTON_DEBOUNCE_MS) return;
 
+  if (!buttonPressed &&
+      profileClickPending &&
+      (now - lastQuickRelease) > BUTTON_COMBO_WINDOW_MS)
+  {
+    applyQuickProfileClicks(1);
+    profileClickPending = false;
+  }
+
   if (currentReading != buttonPressed) {
     buttonPressed = currentReading;
     if (buttonPressed) {
       pressStart = now;
-      savedDuringThisPress = false;
-      Serial.println("Short press clears maximums. Hold 3s to save.");
-    } else if (!savedDuringThisPress) {
-      clearLearnedMaximums();
-    }
-  }
+      comboHoldPress = profileClickPending &&
+                       (now - lastQuickRelease) <= BUTTON_COMBO_WINDOW_MS;
+      if (comboHoldPress) {
+        profileClickPending = false;
+        setStatusLedForcedOn(true);
+        Serial.println("Hold command: release after 3s to clear learned maximums, or after 6s to save.");
+      }
+    } else {
+      unsigned long pressDuration = now - pressStart;
 
-  if (buttonPressed &&
-      !savedDuringThisPress &&
-      (now - pressStart) >= HOLD_TO_SAVE_MS)
-  {
-    saveCalibration();
-    savedDuringThisPress = true;
+      if (comboHoldPress) {
+        setStatusLedForcedOn(false);
+        if (pressDuration >= HOLD_TO_SAVE_MS) {
+          saveCalibration();
+        } else if (pressDuration >= HOLD_TO_CLEAR_MS) {
+          clearLearnedMaximums();
+        } else {
+          Serial.println("Second click released before 3s. Command cancelled; profile unchanged.");
+        }
+        comboHoldPress = false;
+      } else if (pressDuration <= QUICK_PRESS_MAX_MS) {
+        profileClickPending = true;
+        lastQuickRelease = now;
+        Serial.println("Quick click: wait briefly to change profile, or hold the next click for calibration.");
+      } else {
+        Serial.println("Long press ignored. Use quick click + hold for calibration commands.");
+      }
+    }
   }
 }
 
@@ -483,7 +664,7 @@ void loop() {
   int pctThrottle  = calculatePct(usefulThrottle,  MAX_LOAD_THROTTLE);
   int pctClutch  = calculatePct(usefulClutch,  MAX_LOAD_CLUTCH);
   int pctBrakeCurve = applyCurvePct(pctBrake, CURVE_BRAKE_PERCENT);
-  int pctThrottleCurve  = applyCurvePct(pctThrottle,  CURVE_THROTTLE_PERCENT);
+  int pctThrottleCurve  = applyThrottleProfilePct(applyCurvePct(pctThrottle,  CURVE_THROTTLE_PERCENT));
   int pctClutchCurve  = applyCurvePct(pctClutch,  CURVE_CLUTCH_PERCENT);
 
   // Proportional PWM with optional per-pedal curve.

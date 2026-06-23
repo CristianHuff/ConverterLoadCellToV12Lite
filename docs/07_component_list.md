@@ -7,8 +7,8 @@
 | 1 | Arduino Nano | ATmega328P |
 | 3 | HX711 module | One per pedal |
 | 3 | Pedal load cell | Already present in the Sim Ruito pedals |
-| 1 | Momentary button | Calibration |
-| 1 | LED | Calibration status |
+| 1 | Momentary button | Profile/calibration |
+| 1 | LED | Profile/calibration status |
 | 1 | 220 ohm to 1 k resistor | LED series resistor |
 
 ## Filter and Analog Output

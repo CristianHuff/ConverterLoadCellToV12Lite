@@ -8,8 +8,8 @@ This list is kept at the repository root for compatibility. The organized BOM is
 |-----|-----------|-------|
 | 1 | Arduino Nano | ATmega328P |
 | 3 | HX711 module | One per pedal |
-| 1 | Momentary button | Calibration, between D8 and GND |
-| 1 | LED | Calibration status |
+| 1 | Momentary button | Profile/calibration, between D8 and GND |
+| 1 | LED | Profile/calibration status |
 | 1 | 220 ohm to 1 k resistor | LED series resistor |
 | 3 | 1 k resistor | RC filter, one per channel |
 | 3 | 470 nF capacitor | RC filter, one per channel |

@@ -21,8 +21,11 @@ LED cathode -> GND
 
 Indications:
 
-- 1 blink: learned maximums cleared;
-- 3 blinks: calibration saved to EEPROM.
+- 1 short blink: profile 1, Linear/PC;
+- 2 short blinks: profile 2, GT7 inverse throttle;
+- solid on while holding the second click of a calibration command;
+- 1 long blink: learned maximums cleared;
+- 3 long blinks: calibration and active profile saved to EEPROM.
 
 ## Startup
 
@@ -32,20 +35,38 @@ At power-up:
 2. The firmware waits for the HX711 modules to become ready.
 3. It then runs `tare()` on all three pedals.
 4. If valid calibration exists in EEPROM, it loads the saved maximums.
+5. The LED blinks the active profile.
+
+## Change Pedal Profile
+
+Quick-click the button once and wait briefly:
+
+- profile 1: Linear/PC, all pedals linear;
+- profile 2: GT7 inverse throttle, with brake and clutch linear.
+
+This changes the current profile without writing EEPROM. The active profile becomes the startup default only after saving calibration.
 
 ## Clear Learned Maximums
 
-With the system powered, short-press the button. This clears only the learned maximums in RAM.
+With the system powered:
+
+1. Quick-click the button once.
+2. Quick-click again and keep holding.
+3. Release after 3 seconds.
+
+This clears only the learned maximums in RAM.
 
 It does not immediately erase EEPROM.
 
 ## Save Calibration
 
-1. Short-press the button to clear learned maximums.
+1. Clear learned maximums.
 2. Press each pedal to the desired maximum.
 3. You do not need to crush the pedals; use the force/travel you want to represent 100%.
-4. Hold the button for 3 seconds.
-5. The firmware saves the maximums to EEPROM.
+4. Quick-click the button once.
+5. Quick-click again and keep holding.
+6. Release after 6 seconds.
+7. The firmware saves the maximums and the active profile to EEPROM.
 
 ## Maximum Margin
 

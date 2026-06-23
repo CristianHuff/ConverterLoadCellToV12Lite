@@ -22,6 +22,7 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 - Analog outputs are accepted by the PXN base.
 - RJ45 pin 2 was confirmed as GND/return on the tested base.
 - Automatic calibration with a button and EEPROM persistence.
+- Pedal profiles: Linear/PC and GT7 inverse throttle. The active profile is persisted only when calibration is saved.
 - Per-pedal maximum margin so the pedals do not need to be crushed.
 - Short dropout protection for the throttle.
 - Throttle output ramp/step test mode for diagnostics.
@@ -37,7 +38,7 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 | 3x voltage divider | Reduces the 5 V range to a PXN-safe range |
 | RJ9 | Sim Ruito pedal input |
 | RJ45 | Analog output to the PXN base |
-| Momentary button | Clears/saves calibration |
+| Momentary button | Changes profile and clears/saves calibration |
 
 ## Quick Pinout
 
@@ -45,9 +46,9 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 
 | Function | Pins |
 |----------|------|
-| HX711 brake | D2 DATA, D3 SCK |
-| HX711 throttle | D4 DATA, D5 SCK |
-| HX711 clutch | D6 DATA, D7 SCK |
+| HX711 brake | D3 DATA, D2 SCK |
+| HX711 throttle | D5 DATA, D4 SCK |
+| HX711 clutch | D7 DATA, D6 SCK |
 | Brake PWM | D9 |
 | Throttle PWM | D10 |
 | Clutch PWM | D11 |
@@ -71,15 +72,19 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 
 The firmware tares the pedals at startup, so power it on with all pedals released. The calibration button is wired between D8 and GND:
 
-- short press: clears learned maximums in RAM;
-- hold for 3 seconds: saves learned maximums to EEPROM.
+- one quick click, then wait briefly: changes pedal profile without writing EEPROM;
+- one quick click, then hold the second click for 3 seconds: clears learned maximums in RAM;
+- one quick click, then hold the second click for 6 seconds: saves learned maximums and the active profile to EEPROM.
 
 Optional status LED on D12:
 
-- 1 blink: learned maximums cleared;
-- 3 blinks: calibration saved to EEPROM.
+- 1 short blink: profile 1, Linear/PC;
+- 2 short blinks: profile 2, GT7 inverse throttle;
+- solid on while holding the second click;
+- 1 long blink: learned maximums cleared;
+- 3 long blinks: calibration and active profile saved to EEPROM.
 
-After clearing, press each pedal to the desired maximum and hold the button for 3 seconds to save. The `MAX_ADJUST_*_PERCENT` settings apply a margin to the saved maximum.
+After clearing, press each pedal to the desired maximum and use quick click + 6-second hold to save calibration and the active profile. The `MAX_ADJUST_*_PERCENT` settings apply a margin to the saved maximum.
 
 ## Diagnostics
 

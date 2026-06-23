@@ -15,9 +15,9 @@ The firmware does four main things:
 
 | Function | Arduino Pin |
 |----------|-------------|
-| HX711 brake DATA/SCK | D2 / D3 |
-| HX711 throttle DATA/SCK | D4 / D5 |
-| HX711 clutch DATA/SCK | D6 / D7 |
+| HX711 brake DATA/SCK | D3 / D2 |
+| HX711 throttle DATA/SCK | D5 / D4 |
+| HX711 clutch DATA/SCK | D7 / D6 |
 | Calibration button | D8 to GND |
 | Brake PWM | D9 |
 | Throttle PWM | D10 |
@@ -44,8 +44,32 @@ The `CalibrationData` structure stores the three pedal maximums in EEPROM with a
 - `maxBrake`
 - `maxThrottle`
 - `maxClutch`
+- `activeProfile`
 
-At startup, if the data is valid and above the plausible minimums, the firmware uses those values. Otherwise it uses the default values in code.
+At startup, if the data is valid and above the plausible minimums, the firmware uses those values. Otherwise it uses the default values in code. Version 1 calibration data is loaded with the Linear/PC profile and is written as version 2 only when calibration is saved.
+
+## Pedal Profiles
+
+The firmware has two profiles:
+
+| Profile | Behavior |
+|---------|----------|
+| 1 - Linear/PC | Brake, throttle, and clutch are linear |
+| 2 - GT7 inverse throttle | Brake and clutch are linear; throttle uses an inverse GT7 table |
+
+GT7 throttle table:
+
+| Pedal input | Output sent to PXN |
+|-------------|--------------------|
+| 0% | 0% |
+| 25% | 45% |
+| 50% | 75% |
+| 75% | 90% |
+| 100% | 100% |
+
+The firmware interpolates between these points.
+
+Changing profile with the button does not write EEPROM. The active profile is written only together with calibration save, so temporary testing does not wear the EEPROM.
 
 ## Status LED
 
@@ -53,8 +77,11 @@ The status LED is on D12 and uses non-blocking blinks:
 
 | Event | Pattern |
 |-------|---------|
-| Clear learned maximums | 1 blink |
-| Save calibration to EEPROM | 3 blinks |
+| Profile 1 active | 1 short blink |
+| Profile 2 active | 2 short blinks |
+| Holding calibration command | Solid on |
+| Clear learned maximums | 1 long blink |
+| Save calibration and active profile to EEPROM | 3 long blinks |
 
 Recommended wiring:
 
