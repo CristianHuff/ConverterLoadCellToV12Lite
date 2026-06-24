@@ -9,14 +9,20 @@ This file records tests done during the prototype stage and how to repeat the in
 Symptom:
 
 - the base recognized the box through one USB hub but failed through another.
+- with bass shakers active, the PXN/base could lose or misread pedal input even when firmware logs and output voltage stayed stable.
+- with the metal pedal frame floating, the pedal signal could spike/pop when bass shakers were active.
 
 Finding:
 
 - RJ45 pin 2 also works as GND/return on the tested base.
+- USB/GND reference between the PXN/base and translator box matters when bass shakers are active.
+- the metal pedal frame needs a defined reference to translator box GND.
 
 Fix:
 
 - connect RJ45 pins 2, 3, and 5 to common GND.
+- bond the metal pedal frame to translator box GND.
+- connect the PXN/base USB and translator box USB to the same USB hub/reference.
 
 ### Noise with Disconnected Pedal
 
@@ -103,8 +109,17 @@ If the game cuts out:
 
 Bass shakers, car audio modules, and switching power supplies can introduce noise through USB, GND, or the electrical environment.
 
+Observed validation:
+
+- with RJ45 connected, firmware logs (`useful`, `pct`, `out`, `pwm`) and measured output voltage remained stable while the base still lost/misread the pedal signal;
+- moving the translator box USB and PXN/base USB to the same hub/reference resolved the issue in the prototype;
+- RJ45 pins 2, 3, and 5 were tied to common GND.
+- the metal pedal frame was bonded to translator box GND; without this bond, bass shaker vibration could still make the signal spike/pop.
+
 Recommendations:
 
+- keep the PXN/base USB and translator box USB on the same USB hub/reference when bass shakers are used;
+- bond the metal pedal frame to translator box GND;
 - separate power cables from load-cell cables;
 - avoid running `A+`/`A-` signals near high-current wires;
 - use a well-defined common GND;

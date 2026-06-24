@@ -59,15 +59,15 @@ The measured original PXN pedals work near 0 V to 2 V on the signal pins. Arduin
 
 | Pin | Function |
 |-----|----------|
-| D2 | HX711 Brake - CLOCK |
-| D3 | HX711 Brake - DATA |
-| D4 | HX711 Throttle - CLOCK |
-| D5 | HX711 Throttle - DATA |
-| D6 | HX711 Clutch - CLOCK |
-| D7 | HX711 Clutch - DATA |
-| D9 | Brake PWM (Timer1, ~62kHz) |
-| D10 | Throttle PWM (Timer1, ~62kHz) |
-| D11 | Clutch PWM (Timer2, ~31kHz) |
+| D2 | HX711 Clutch - CLOCK |
+| D3 | HX711 Clutch - DATA |
+| D4 | HX711 Brake - CLOCK |
+| D5 | HX711 Brake - DATA |
+| D6 | HX711 Throttle - CLOCK |
+| D7 | HX711 Throttle - DATA |
+| D9 | Clutch PWM (Timer1, ~62kHz) |
+| D10 | Brake PWM (Timer1, ~62kHz) |
+| D11 | Throttle PWM (Timer2, ~31kHz) |
 | D8 | Calibration button to GND |
 | 5V | HX711 power (VCC) |
 | GND | Common GND |
@@ -115,9 +115,9 @@ On a breadboard, reference problems can appear when the Arduino and base are con
                     +-------------+
     PC USB hub -----| Arduino Nano|----- USB -> PC (SimHub)
                     |             |
-    Brake HX711 --->| D3/D2   D9  |--> RC filter -> Divider -> RJ45 pin 4
-    Throttle HX711 >| D5/D4   D10 |--> RC filter -> Divider -> RJ45 pin 6
-    Clutch HX711 -->| D7/D6   D11 |--> RC filter -> Divider -> RJ45 pin 1
+    Clutch HX711 -->| D3/D2   D9  |--> RC filter -> Divider -> RJ45 pin 1
+    Brake HX711 --->| D5/D4   D10 |--> RC filter -> Divider -> RJ45 pin 4
+    Throttle HX711 >| D7/D6   D11 |--> RC filter -> Divider -> RJ45 pin 6
                     +-------------+
                                               RJ45 -> PXN base -> USB -> PS5
 ```

@@ -26,6 +26,7 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 - Per-pedal maximum margin so the pedals do not need to be crushed.
 - Short dropout protection for the throttle.
 - Throttle output ramp/step test mode for diagnostics.
+- Bass shaker validation: the translator box USB and PXN/base USB should share the same USB hub/reference, RJ45 pins 2, 3, and 5 should be tied to common GND, and the metal pedal frame should be bonded to the translator box GND.
 - Tested on a breadboard; the final board still needs better GND, filters, and decoupling.
 
 ## Main Hardware
@@ -46,12 +47,12 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 
 | Function | Pins |
 |----------|------|
-| HX711 brake | D3 DATA, D2 SCK |
-| HX711 throttle | D5 DATA, D4 SCK |
-| HX711 clutch | D7 DATA, D6 SCK |
-| Brake PWM | D9 |
-| Throttle PWM | D10 |
-| Clutch PWM | D11 |
+| HX711 clutch | D3 DATA, D2 SCK |
+| HX711 brake | D5 DATA, D4 SCK |
+| HX711 throttle | D7 DATA, D6 SCK |
+| Clutch PWM | D9 |
+| Brake PWM | D10 |
+| Throttle PWM | D11 |
 | Calibration button | D8 to GND |
 | Status LED | D12 through resistor to GND |
 
@@ -68,6 +69,8 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 | 7 | 3.3 V VREF, do not use as VCC |
 | 8 | 3.3 V VREF, do not use as VCC |
 
+For stable bass shaker use, connect RJ45 pins `2`, `3`, and `5` to the translator box common GND, bond the metal pedal frame to the translator box GND, and keep the Arduino/translator box USB on the same USB hub/reference as the PXN/base.
+
 ## Calibration
 
 The firmware tares the pedals at startup, so power it on with all pedals released. The calibration button is wired between D8 and GND:
@@ -81,6 +84,8 @@ Optional status LED on D12:
 - 1 short blink: profile 1, Linear/PC;
 - 2 short blinks: profile 2, GT7 inverse throttle;
 - solid on while holding the second click;
+- 1 quick pulse while holding: 3s clear point reached;
+- 3 quick pulses while holding: 6s save point reached;
 - 1 long blink: learned maximums cleared;
 - 3 long blinks: calibration and active profile saved to EEPROM.
 

@@ -24,6 +24,8 @@ Indications:
 - 1 short blink: profile 1, Linear/PC;
 - 2 short blinks: profile 2, GT7 inverse throttle;
 - solid on while holding the second click of a calibration command;
+- 1 quick pulse while holding: 3s clear point reached;
+- 3 quick pulses while holding: 6s save point reached;
 - 1 long blink: learned maximums cleared;
 - 3 long blinks: calibration and active profile saved to EEPROM.
 
@@ -52,7 +54,7 @@ With the system powered:
 
 1. Quick-click the button once.
 2. Quick-click again and keep holding.
-3. Release after 3 seconds.
+3. Release after the 1 quick pulse at 3 seconds.
 
 This clears only the learned maximums in RAM.
 
@@ -65,7 +67,7 @@ It does not immediately erase EEPROM.
 3. You do not need to crush the pedals; use the force/travel you want to represent 100%.
 4. Quick-click the button once.
 5. Quick-click again and keep holding.
-6. Release after 6 seconds.
+6. Release after the 3 quick pulses at 6 seconds.
 7. The firmware saves the maximums and the active profile to EEPROM.
 
 ## Maximum Margin

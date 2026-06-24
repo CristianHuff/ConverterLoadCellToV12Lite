@@ -15,13 +15,13 @@ The firmware does four main things:
 
 | Function | Arduino Pin |
 |----------|-------------|
-| HX711 brake DATA/SCK | D3 / D2 |
-| HX711 throttle DATA/SCK | D5 / D4 |
-| HX711 clutch DATA/SCK | D7 / D6 |
+| HX711 clutch DATA/SCK | D3 / D2 |
+| HX711 brake DATA/SCK | D5 / D4 |
+| HX711 throttle DATA/SCK | D7 / D6 |
+| Clutch PWM | D9 |
+| Brake PWM | D10 |
+| Throttle PWM | D11 |
 | Calibration button | D8 to GND |
-| Brake PWM | D9 |
-| Throttle PWM | D10 |
-| Clutch PWM | D11 |
 | Status LED | D12 through resistor to GND |
 
 ## PWM
@@ -80,6 +80,8 @@ The status LED is on D12 and uses non-blocking blinks:
 | Profile 1 active | 1 short blink |
 | Profile 2 active | 2 short blinks |
 | Holding calibration command | Solid on |
+| 3s hold threshold reached | 1 quick pulse while still holding |
+| 6s hold threshold reached | 3 quick pulses while still holding |
 | Clear learned maximums | 1 long blink |
 | Save calibration and active profile to EEPROM | 3 long blinks |
 
@@ -112,11 +114,11 @@ Current dead zones:
 
 ```cpp
 const long DEAD_ZONE_BRAKE = 40000;
-const long DEAD_ZONE_THROTTLE = 100;
+const long DEAD_ZONE_THROTTLE = 1500;
 const long DEAD_ZONE_CLUTCH = 500;
 ```
 
-The brake uses a larger zone so resting a foot does not trigger braking in-game.
+The brake uses a larger zone so resting a foot does not trigger braking in-game. The throttle dead zone also rejects small vibration/noise spikes from pedal bass shakers.
 
 ## Digital Filter
 
@@ -179,6 +181,6 @@ const bool TEST_THROTTLE_OUTPUT = false;
 const bool TEST_THROTTLE_OUTPUT_STEPS = true;
 ```
 
-When `TEST_THROTTLE_OUTPUT` is `true`, the throttle ignores the HX711 and generates steps/a ramp directly on PWM D10.
+When `TEST_THROTTLE_OUTPUT` is `true`, the throttle ignores the HX711 and generates steps/a ramp directly on PWM D11.
 
 Use this mode to verify whether the PXN sees the signal without depending on the load cell.
