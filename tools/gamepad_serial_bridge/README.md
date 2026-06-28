@@ -1,6 +1,6 @@
 # Gamepad Serial Pedal Bridge Tool
 
-Browser-based bridge that reads the Sim Ruito pedal board through the Gamepad API and sends `clutch,brake,throttle` percentages to the Arduino serial bridge through Web Serial.
+Browser-based bridge that reads the Sim Ruito pedal board through the Gamepad API and sends pedal percentages to the Arduino serial bridge through Web Serial.
 
 Open:
 
@@ -23,7 +23,16 @@ The older `tools/gamepad_serial_bridge.html` file is kept as a compatibility lau
 | `js/logger.js` | Detailed JSONL/text logging and file download |
 | `js/app.js` | Gamepad polling, serial handling, settings, and UI state |
 
-Keep pedal order as `clutch,brake,throttle` in the UI, logs, and serial output so it matches the physical pedal order and Arduino firmware.
+Keep pedal order as clutch, brake, throttle in the UI and logs so it matches the physical pedal order. The current Arduino firmware uses serial protocol `clutch,brake,throttle`; the browser can also auto-detect the legacy firmware protocol `brake,throttle,clutch`.
+
+The browser sends `PING` after opening the serial port, but Start/Test only require the serial port to be open. Arduino replies are diagnostics, not a transmit gate. The expected current firmware response is `PONG serial_pedal_bridge`; older bridge firmware may answer with `Invalid pedal line: PING`, which still proves the selected COM port is the Arduino.
+
+When the browser sees `PONG serial_pedal_bridge` or `Send lines as: clutch,brake,throttle`, it uses the current protocol. When it sees `Invalid pedal line: PING` or `Send lines as: brake,throttle,clutch`, it switches to the legacy protocol automatically.
+
+Current bridge firmware also reports valid serial input about once per second as `RX ok packets:<count> last:<clutch>,<brake>,<throttle>`. If this counter does not increase while the bridge is running, the Arduino is not receiving valid pedal lines.
+
+While running, the tool sends a continuous low-latency serial stream at `Send rate Hz`; it does not wait for pedal values to change before transmitting.
+Manual `Test 50%` also streams at the configured rate for the test window, so the Arduino's low timeout does not drop the output during the test.
 
 ## Configuration Features
 
@@ -33,11 +42,14 @@ Keep pedal order as `clutch,brake,throttle` in the UI, logs, and serial output s
 - `Export` and `Import` move the current setup as JSON between browsers or PCs.
 - `Set Min` and `Set Max` capture the current raw gamepad axis value for each pedal.
 - `Set All Min` and `Set All Max` capture all pedal axis limits in one action.
-- `Auto start when ready` starts the bridge when both the locked gamepad and serial port are available.
+- `Auto start when ready` starts the bridge when the locked gamepad is available and the Arduino serial port is open.
+- `TX mode` defaults to `Continuous / low latency`. Use `Changed + heartbeat` to match the older single-file bridge behavior when comparing stability.
+- Remote-play/XInput gamepads are ignored by auto-selection so Moonlight/Xbox controllers do not steal the pedal slot; SimJack devices are not treated as Sim Ruito pedals.
 - The profile preview canvas shows the active throttle curve before values are sent to the Arduino.
 - `Custom throttle` lets the PC-side curve be edited at `[0,25,50,75,100]%` input points.
 - The diagnostics graph shows recent clutch, brake, and throttle output history.
+- `Connected Gamepads` shows every gamepad currently exposed by the browser.
 - The calibration panel captures released and pressed axis snapshots before applying them.
-- Dropout guard filtering is configurable per pedal.
-- Automatic alerts flag missing locked gamepad, stale serial TX, dropout guard activity, and non-monotonic custom curves.
+- Dropout guard filtering is configurable per pedal, but defaults to `0 ms` for lowest latency.
+- Automatic alerts flag missing locked gamepad, unconfirmed Arduino diagnostic replies, stale serial TX, dropout guard activity, and non-monotonic custom curves.
 - Diagnostics also shows recommendations based on the current alert and telemetry state, with apply buttons for supported adjustments.

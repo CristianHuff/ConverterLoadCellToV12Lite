@@ -14,18 +14,27 @@ const int PWM_REST = 3;
 const int PWM_MAX_BRAKE = 204;
 const int PWM_MAX_THROTTLE = 194;
 const int PWM_MAX_CLUTCH = 193;
+const byte STATUS_LED = LED_BUILTIN;
 
 // Serial protocol.
 // Expected line: clutch,brake,throttle
 // Example: 0,23,71
+// Diagnostic command: PING
 const unsigned long SERIAL_BAUD = 115200;
-const unsigned long SERIAL_TIMEOUT_MS = 300;
+const unsigned long SERIAL_TIMEOUT_MS = 250;
+const unsigned long SERIAL_REPORT_MS = 1000;
+const unsigned long MANUAL_COMMAND_HOLD_MS = 3000;
 const byte SERIAL_BUFFER_SIZE = 32;
 
 int pctBrake = 0;
 int pctThrottle = 0;
 int pctClutch = 0;
 unsigned long lastSerialPacket = 0;
+unsigned long lastSerialReport = 0;
+unsigned long serialPacketCount = 0;
+unsigned long lastReportedPacketCount = 0;
+unsigned long statusLedUntil = 0;
+unsigned long manualCommandHoldUntil = 0;
 bool serialTimedOut = true;
 
 // ============================================================
@@ -39,6 +48,35 @@ int clampPct(int pct) {
 int calculatePWMFromPct(int pct, int pwmMax) {
   pct = clampPct(pct);
   return map(pct, 0, 100, PWM_REST, pwmMax);
+}
+
+// ============================================================
+void acceptPedalValues(int clutch, int brake, int throttle, unsigned long holdMs) {
+  pctClutch = clampPct(clutch);
+  pctBrake = clampPct(brake);
+  pctThrottle = clampPct(throttle);
+  lastSerialPacket = millis();
+  manualCommandHoldUntil = holdMs > 0 ? lastSerialPacket + holdMs : 0;
+  serialPacketCount++;
+  pulseStatusLed();
+  if (serialTimedOut) {
+    serialTimedOut = false;
+    Serial.println(F("Serial pedal input active."));
+  }
+}
+
+// ============================================================
+void pulseStatusLed() {
+  digitalWrite(STATUS_LED, HIGH);
+  statusLedUntil = millis() + 40;
+}
+
+// ============================================================
+void updateStatusLed() {
+  if (statusLedUntil != 0 && millis() >= statusLedUntil) {
+    digitalWrite(STATUS_LED, LOW);
+    statusLedUntil = 0;
+  }
 }
 
 // ============================================================
@@ -58,6 +96,42 @@ bool parsePedalLine(char* line, int* clutch, int* brake, int* throttle) {
 }
 
 // ============================================================
+bool handleSerialCommand(char* line) {
+  if (strcmp(line, "PING") == 0) {
+    pulseStatusLed();
+    Serial.println(F("PONG serial_pedal_bridge"));
+    return true;
+  }
+
+  if (strcmp(line, "R") == 0 || strcmp(line, "REST") == 0) {
+    acceptPedalValues(0, 0, 0, MANUAL_COMMAND_HOLD_MS);
+    Serial.println(F("Manual command: rest"));
+    return true;
+  }
+
+  char pedal = line[0];
+  if ((pedal == 'C' || pedal == 'B' || pedal == 'T') && line[1] != '\0') {
+    int pct = clampPct(atoi(line + 1));
+    int clutch = 0;
+    int brake = 0;
+    int throttle = 0;
+
+    if (pedal == 'C') clutch = pct;
+    if (pedal == 'B') brake = pct;
+    if (pedal == 'T') throttle = pct;
+
+    acceptPedalValues(clutch, brake, throttle, MANUAL_COMMAND_HOLD_MS);
+    Serial.print(F("Manual command: "));
+    Serial.print(pedal);
+    Serial.print(F(" "));
+    Serial.println(pct);
+    return true;
+  }
+
+  return false;
+}
+
+// ============================================================
 void readSerialPedals() {
   static char buffer[SERIAL_BUFFER_SIZE];
   static byte index = 0;
@@ -73,15 +147,10 @@ void readSerialPedals() {
       int newClutch = 0;
       int newBrake = 0;
       int newThrottle = 0;
-      if (parsePedalLine(buffer, &newClutch, &newBrake, &newThrottle)) {
-        pctBrake = newBrake;
-        pctThrottle = newThrottle;
-        pctClutch = newClutch;
-        lastSerialPacket = millis();
-        if (serialTimedOut) {
-          serialTimedOut = false;
-          Serial.println(F("Serial pedal input active."));
-        }
+      if (handleSerialCommand(buffer)) {
+        // Command handled; no pedal output change.
+      } else if (parsePedalLine(buffer, &newClutch, &newBrake, &newThrottle)) {
+        acceptPedalValues(newClutch, newBrake, newThrottle, 0);
       } else if (buffer[0] != '\0') {
         Serial.print(F("Invalid pedal line: "));
         Serial.println(buffer);
@@ -96,12 +165,33 @@ void readSerialPedals() {
 }
 
 // ============================================================
+void reportSerialActivity() {
+  if (serialTimedOut) return;
+  if (serialPacketCount == lastReportedPacketCount) return;
+  if ((millis() - lastSerialReport) < SERIAL_REPORT_MS) return;
+
+  lastSerialReport = millis();
+  lastReportedPacketCount = serialPacketCount;
+  Serial.print(F("RX ok packets:"));
+  Serial.print(serialPacketCount);
+  Serial.print(F(" last:"));
+  Serial.print(pctClutch);
+  Serial.print(',');
+  Serial.print(pctBrake);
+  Serial.print(',');
+  Serial.println(pctThrottle);
+}
+
+// ============================================================
 void applyOutputs() {
-  bool timedOut = (millis() - lastSerialPacket) > SERIAL_TIMEOUT_MS;
+  unsigned long now = millis();
+  bool manualHoldActive = manualCommandHoldUntil != 0 && now < manualCommandHoldUntil;
+  bool timedOut = !manualHoldActive && (now - lastSerialPacket) > SERIAL_TIMEOUT_MS;
   if (timedOut) {
     pctBrake = 0;
     pctThrottle = 0;
     pctClutch = 0;
+    manualCommandHoldUntil = 0;
     if (!serialTimedOut) {
       serialTimedOut = true;
       Serial.println(F("Serial pedal input timeout. Outputs at rest."));
@@ -116,6 +206,8 @@ void applyOutputs() {
 // ============================================================
 void setup() {
   Serial.begin(SERIAL_BAUD);
+  pinMode(STATUS_LED, OUTPUT);
+  digitalWrite(STATUS_LED, LOW);
 
   // Timer1 -> pins 9 and 10 at ~62kHz.
   TCCR1A = _BV(COM1A1) | _BV(COM1B1) | _BV(WGM10);
@@ -140,5 +232,7 @@ void setup() {
 void loop() {
   readSerialPedals();
   applyOutputs();
+  reportSerialActivity();
+  updateStatusLed();
   delay(0);
 }

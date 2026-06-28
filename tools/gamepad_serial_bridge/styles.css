@@ -537,6 +537,54 @@ button:disabled {
   margin-bottom: 8px;
 }
 
+.gamepad-list {
+  display: grid;
+  gap: 8px;
+}
+
+.gamepad-item {
+  display: grid;
+  gap: 4px;
+  min-height: 58px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #151d21;
+}
+
+.gamepad-item strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 0.9rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gamepad-item span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.gamepad-item.active {
+  border-color: rgba(16, 181, 165, 0.8);
+  box-shadow: 0 0 0 1px rgba(16, 181, 165, 0.22);
+}
+
+.gamepad-item.pedal-device span {
+  color: #75f1e5;
+}
+
+.gamepad-item.remote-device span {
+  color: var(--warn);
+}
+
+.gamepad-item.muted {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
 @media (max-width: 900px) {
   .hero,
   .dashboard-grid,

@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gamepad Serial Pedal Bridge</title>
-  <link rel="stylesheet" href="styles.css">
-  <script defer src="js/config.js"></script>
+  <link rel="stylesheet" href="styles.css?v=20260628-autostart-retry">
+  <script defer src="js/config.js?v=20260628-autostart-retry"></script>
   <script defer src="js/profiles.js"></script>
   <script defer src="js/settings.js"></script>
   <script defer src="js/telemetry.js"></script>
-  <script defer src="js/health.js"></script>
+  <script defer src="js/health.js?v=20260628-autostart-retry"></script>
   <script defer src="js/logger.js"></script>
-  <script defer src="js/app.js"></script>
+  <script defer src="js/app.js?v=20260628-autostart-retry"></script>
 </head>
 <body>
   <main class="shell">
@@ -70,7 +70,9 @@
           <div class="metric"><span>TX rate</span><strong id="txRate">0 Hz</strong></div>
           <div class="metric"><span>Packets</span><strong id="txCount">0</strong></div>
           <div class="metric"><span>Drop guard</span><strong id="guardCount">0</strong></div>
+          <div class="metric"><span>Protocol</span><strong id="serialProtocol">current</strong></div>
           <div class="metric metric-wide"><span>Last line</span><strong id="lastLine">0,0,0</strong></div>
+          <div class="metric metric-wide"><span>Arduino RX</span><strong id="arduinoRx">No data</strong></div>
         </div>
       </section>
     </div>
@@ -96,16 +98,33 @@
         </div>
         <button id="resetCurve">Reset Curve</button>
         <div class="actions">
-          <button id="testThrottle" disabled>Test 50%</button>
+          <button id="testClutch" disabled>Clutch 50%</button>
+          <button id="testBrake" disabled>Brake 50%</button>
+          <button id="testThrottle" disabled>Throttle 50%</button>
           <button id="testRest" disabled>Test Rest</button>
         </div>
+        <button id="testSweep" disabled>Sweep Throttle</button>
       </section>
 
       <section class="panel stack">
         <h2>Signal Filters</h2>
         <label>
+          Serial transport
+          <select id="serialTransport">
+            <option value="local-bridge">Local COM bridge</option>
+            <option value="web-serial">Browser Web Serial</option>
+          </select>
+        </label>
+        <label>
           Send rate Hz
           <input id="rate" type="number" min="10" max="120" step="1" value="50">
+        </label>
+        <label>
+          TX mode
+          <select id="txMode">
+            <option value="continuous">Continuous / low latency</option>
+            <option value="heartbeat">Changed + heartbeat</option>
+          </select>
         </label>
         <label>
           Deadzone %
@@ -113,15 +132,15 @@
         </label>
         <label>
           Clutch dropout guard ms
-          <input id="clutchDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+          <input id="clutchDropoutGuard" type="number" min="0" max="250" step="10" value="0">
         </label>
         <label>
           Brake dropout guard ms
-          <input id="brakeDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+          <input id="brakeDropoutGuard" type="number" min="0" max="250" step="10" value="0">
         </label>
         <label>
           Throttle dropout guard ms
-          <input id="throttleDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+          <input id="throttleDropoutGuard" type="number" min="0" max="250" step="10" value="0">
         </label>
       </section>
 
@@ -233,6 +252,11 @@
     <section class="panel stack">
       <h2>Live Axes</h2>
       <div class="axis-grid" id="axisGrid"></div>
+    </section>
+
+    <section class="panel stack">
+      <h2>Connected Gamepads</h2>
+      <div class="gamepad-list" id="gamepadList"></div>
     </section>
   </main>
 </body>

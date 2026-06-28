@@ -6,12 +6,30 @@
     port: null,
     writer: null,
     reader: null,
+    serialWriteQueue: Promise.resolve(),
     serialRxBuffer: "",
+    serialConfirmed: false,
+    serialOpenedAt: 0,
+    serialLastRx: 0,
+    serialUnexpectedRx: "",
+    serialProbeTimer: 0,
+    serialProbeUntil: 0,
+    serialProtocol: bridge.SERIAL_PROTOCOL_DEFAULT,
+    localBridgeConnected: false,
+    localBridgePollTimer: 0,
+    localBridgeRxCount: 0,
+    gamepadSignature: "",
+    gamepadScanTimer: 0,
     running: false,
     lastLine: "",
     lastSend: 0,
     timer: 0,
+    tickBusy: false,
+    skippedTicks: 0,
     manualHoldUntil: 0,
+    manualStreamTimer: 0,
+    autoStartRetryTimer: 0,
+    autoStartDeadline: 0,
     lastPct: { clutch: 0, brake: 0, throttle: 0 },
     dropStart: { clutch: 0, brake: 0, throttle: 0 },
     selectedGamepadId: localStorage.getItem(`${bridge.STORAGE_PREFIX}selectedGamepadId`) || "",
@@ -33,11 +51,16 @@
     pedalProfile: document.querySelector("#pedalProfile"),
     refreshGamepads: document.querySelector("#refreshGamepads"),
     connectSerial: document.querySelector("#connectSerial"),
+    testClutch: document.querySelector("#testClutch"),
+    testBrake: document.querySelector("#testBrake"),
     testThrottle: document.querySelector("#testThrottle"),
     testRest: document.querySelector("#testRest"),
+    testSweep: document.querySelector("#testSweep"),
     startBridge: document.querySelector("#startBridge"),
     stopBridge: document.querySelector("#stopBridge"),
+    serialTransport: document.querySelector("#serialTransport"),
     rate: document.querySelector("#rate"),
+    txMode: document.querySelector("#txMode"),
     deadzone: document.querySelector("#deadzone"),
     clutchDropoutGuard: document.querySelector("#clutchDropoutGuard"),
     brakeDropoutGuard: document.querySelector("#brakeDropoutGuard"),
@@ -66,12 +89,15 @@
     configImportFile: document.querySelector("#configImportFile"),
     log: document.querySelector("#log"),
     axisGrid: document.querySelector("#axisGrid"),
+    gamepadList: document.querySelector("#gamepadList"),
     curvePreview: document.querySelector("#curvePreview"),
     signalHistory: document.querySelector("#signalHistory"),
     txRate: document.querySelector("#txRate"),
     txCount: document.querySelector("#txCount"),
     guardCount: document.querySelector("#guardCount"),
+    serialProtocol: document.querySelector("#serialProtocol"),
     lastLine: document.querySelector("#lastLine"),
+    arduinoRx: document.querySelector("#arduinoRx"),
     clutchFill: document.querySelector("#clutchFill"),
     clutchValue: document.querySelector("#clutchValue"),
     brakeFill: document.querySelector("#brakeFill"),
@@ -130,10 +156,86 @@
     element.classList.toggle("warn", !ok);
   }
 
+  function canSendPedals() {
+    return isLocalBridgeTransport() ? state.localBridgeConnected : Boolean(state.writer);
+  }
+
+  function isLocalBridgeTransport() {
+    return els.serialTransport.value === bridge.TRANSPORT_LOCAL_BRIDGE;
+  }
+
+  function updateSerialStatus() {
+    if (els.serialProtocol) {
+      els.serialProtocol.textContent = state.serialProtocol === bridge.SERIAL_PROTOCOL_LEGACY ? "legacy" : "current";
+    }
+
+    if (isLocalBridgeTransport()) {
+      setPill(els.serialStatus, state.localBridgeConnected ? "Local bridge connected" : "Local bridge disconnected", state.localBridgeConnected);
+      return;
+    }
+
+    if (!state.writer) {
+      setPill(els.serialStatus, "Serial disconnected", false);
+      return;
+    }
+
+    if (state.serialConfirmed) {
+      setPill(els.serialStatus, "Arduino confirmed", true);
+      return;
+    }
+
+    const age = state.serialOpenedAt ? performance.now() - state.serialOpenedAt : 0;
+    const label = state.serialUnexpectedRx
+      ? "Unexpected RX"
+      : age < bridge.SERIAL_BOOT_GRACE_MS
+        ? "Arduino booting"
+      : age > bridge.SERIAL_CONFIRM_TIMEOUT_MS
+        ? "No Arduino RX"
+        : "Serial opening";
+    setPill(els.serialStatus, label, false);
+  }
+
+  function cleanSerialLine(line) {
+    return String(line || "")
+      .replace(/[^\x20-\x7E]/g, "?")
+      .trim();
+  }
+
+  function isBridgeSerialLine(line) {
+    return /^(PONG serial_pedal_bridge|Serial pedal bridge ready\.|Send lines as: clutch,brake,throttle|Send lines as: brake,throttle,clutch|Pedal profiles are handled by the PC bridge\.|Serial pedal input active\.|Serial pedal input timeout\. Outputs at rest\.|Invalid pedal line: PING|Active pedal profile \d+: .+|RX ok packets:\d+ last:\d+,\d+,\d+)$/.test(line);
+  }
+
+  function detectSerialProtocol(line) {
+    if (line === "Send lines as: brake,throttle,clutch" || line === "Invalid pedal line: PING") {
+      state.serialProtocol = bridge.SERIAL_PROTOCOL_LEGACY;
+      return;
+    }
+
+    if (line === "Send lines as: clutch,brake,throttle" || line === "PONG serial_pedal_bridge") {
+      state.serialProtocol = bridge.SERIAL_PROTOCOL_CURRENT;
+    }
+  }
+
+  function formatPedalLine(values) {
+    const pct = {
+      clutch: bridge.clampPct(Number(values.clutch) || 0),
+      brake: bridge.clampPct(Number(values.brake) || 0),
+      throttle: bridge.clampPct(Number(values.throttle) || 0)
+    };
+
+    if (state.serialProtocol === bridge.SERIAL_PROTOCOL_LEGACY) {
+      return `${pct.brake},${pct.throttle},${pct.clutch}\n`;
+    }
+
+    return `${pct.clutch},${pct.brake},${pct.throttle}\n`;
+  }
+
   function currentSettings() {
     return {
       schema: "gamepad-serial-bridge-settings-v1",
+      serialTransport: els.serialTransport.value,
       rateHz: Number(els.rate.value),
+      txMode: els.txMode.value,
       serialHeartbeatMs: bridge.SERIAL_HEARTBEAT_MS,
       pedalProfile: els.pedalProfile.value,
       customCurve: currentCustomCurve(),
@@ -160,7 +262,9 @@
   function persistCurrentSettings() {
     localStorage.setItem(`${bridge.STORAGE_PREFIX}pedalProfile`, els.pedalProfile.value);
     localStorage.setItem(`${bridge.STORAGE_PREFIX}customCurve`, JSON.stringify(currentCustomCurve()));
+    localStorage.setItem(`${bridge.STORAGE_PREFIX}serialTransport`, els.serialTransport.value);
     localStorage.setItem(`${bridge.STORAGE_PREFIX}rate`, els.rate.value);
+    localStorage.setItem(`${bridge.STORAGE_PREFIX}txMode`, els.txMode.value);
     localStorage.setItem(`${bridge.STORAGE_PREFIX}deadzone`, els.deadzone.value);
     localStorage.setItem(`${bridge.STORAGE_PREFIX}clutchDropoutGuard`, els.clutchDropoutGuard.value);
     localStorage.setItem(`${bridge.STORAGE_PREFIX}brakeDropoutGuard`, els.brakeDropoutGuard.value);
@@ -180,7 +284,9 @@
     if (Array.isArray(settings.customCurve)) {
       setCustomCurve(settings.customCurve);
     }
+    if (settings.serialTransport) els.serialTransport.value = settings.serialTransport;
     if (Number.isFinite(settings.rateHz)) els.rate.value = settings.rateHz;
+    if (settings.txMode) els.txMode.value = settings.txMode;
     if (Number.isFinite(settings.deadzonePct)) els.deadzone.value = settings.deadzonePct;
     if (settings.dropoutGuardMs && typeof settings.dropoutGuardMs === "object") {
       if (Number.isFinite(settings.dropoutGuardMs.clutch)) els.clutchDropoutGuard.value = settings.dropoutGuardMs.clutch;
@@ -221,11 +327,13 @@
   function resetDefaultSettings() {
     els.pedalProfile.value = "linear";
     setCustomCurve(bridge.GT7_THROTTLE_OUTPUT);
+    els.serialTransport.value = bridge.TRANSPORT_DEFAULT;
     els.rate.value = "50";
+    els.txMode.value = bridge.TX_MODE_DEFAULT;
     els.deadzone.value = "0";
-    els.clutchDropoutGuard.value = "80";
-    els.brakeDropoutGuard.value = "80";
-    els.throttleDropoutGuard.value = "80";
+    els.clutchDropoutGuard.value = "0";
+    els.brakeDropoutGuard.value = "0";
+    els.throttleDropoutGuard.value = "0";
     els.lockGamepad.checked = true;
     els.autoStart.checked = true;
     state.lockGamepad = true;
@@ -261,14 +369,22 @@
     els.autoStart.checked = state.autoStart;
     els.pedalProfile.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}pedalProfile`) || els.pedalProfile.value;
     setCustomCurve(loadStoredCustomCurve());
+    els.serialTransport.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}serialTransport`) || bridge.TRANSPORT_DEFAULT;
     els.rate.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}rate`) || els.rate.value;
+    els.txMode.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}txMode`) || bridge.TX_MODE_DEFAULT;
 
     const savedDeadzone = localStorage.getItem(`${bridge.STORAGE_PREFIX}deadzone`);
     els.deadzone.value = savedDeadzone === "2" || savedDeadzone === null ? "0" : savedDeadzone;
     localStorage.setItem(`${bridge.STORAGE_PREFIX}deadzone`, els.deadzone.value);
-    els.clutchDropoutGuard.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}clutchDropoutGuard`) || els.clutchDropoutGuard.value;
-    els.brakeDropoutGuard.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}brakeDropoutGuard`) || els.brakeDropoutGuard.value;
-    els.throttleDropoutGuard.value = localStorage.getItem(`${bridge.STORAGE_PREFIX}throttleDropoutGuard`) || els.throttleDropoutGuard.value;
+    const savedClutchGuard = localStorage.getItem(`${bridge.STORAGE_PREFIX}clutchDropoutGuard`);
+    const savedBrakeGuard = localStorage.getItem(`${bridge.STORAGE_PREFIX}brakeDropoutGuard`);
+    const savedThrottleGuard = localStorage.getItem(`${bridge.STORAGE_PREFIX}throttleDropoutGuard`);
+    els.clutchDropoutGuard.value = savedClutchGuard === null || savedClutchGuard === "80" ? "0" : savedClutchGuard;
+    els.brakeDropoutGuard.value = savedBrakeGuard === null || savedBrakeGuard === "80" ? "0" : savedBrakeGuard;
+    els.throttleDropoutGuard.value = savedThrottleGuard === null || savedThrottleGuard === "80" ? "0" : savedThrottleGuard;
+    localStorage.setItem(`${bridge.STORAGE_PREFIX}clutchDropoutGuard`, els.clutchDropoutGuard.value);
+    localStorage.setItem(`${bridge.STORAGE_PREFIX}brakeDropoutGuard`, els.brakeDropoutGuard.value);
+    localStorage.setItem(`${bridge.STORAGE_PREFIX}throttleDropoutGuard`, els.throttleDropoutGuard.value);
 
     bridge.PEDAL_ORDER.forEach((key) => {
       const control = controls[key];
@@ -369,22 +485,40 @@
     return Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean);
   }
 
+  function isPedalGamepad(pad) {
+    return Boolean(pad && bridge.PEDAL_GAMEPAD_PATTERN.test(pad.id));
+  }
+
+  function isRemoteGamepad(pad) {
+    return Boolean(pad && bridge.REMOTE_GAMEPAD_PATTERN.test(pad.id) && !isPedalGamepad(pad));
+  }
+
+  function gamepadListSignature(pads) {
+    return pads
+      .map((pad) => `${pad.index}:${pad.id}:${pad.axes.length}:${pad.buttons.length}:${pad.connected}`)
+      .join("|");
+  }
+
   function preferredGamepad(pads) {
     if (pads.length === 0) return null;
+    const pedalPads = pads.filter(isPedalGamepad);
 
     if (state.lockGamepad && state.selectedGamepadId) {
       const saved = pads.find((pad) => pad.id === state.selectedGamepadId);
-      return saved || null;
+      if (saved) return saved;
+
+      const pedal = pedalPads[0];
+      return pedal || null;
     }
 
     const selectedIndex = Number(els.gamepadSelect.value);
     const selected = pads.find((pad) => pad.index === selectedIndex);
-    if (selected) return selected;
+    if (selected && isPedalGamepad(selected)) return selected;
 
-    const simRuito = pads.find((pad) => /sim|ruito|pedal|wheel|joystick|usb/i.test(pad.id));
+    const simRuito = pedalPads[0];
     if (simRuito) return simRuito;
 
-    return pads.find((pad) => !/xbox/i.test(pad.id)) || pads[0];
+    return null;
   }
 
   function selectedGamepad() {
@@ -426,7 +560,9 @@
   function refreshGamepads() {
     const pads = getGamepads();
     const preferred = preferredGamepad(pads);
+    state.gamepadSignature = gamepadListSignature(pads);
     els.gamepadSelect.textContent = "";
+    renderGamepadList(pads, preferred);
 
     pads.forEach((pad) => {
       const option = document.createElement("option");
@@ -453,6 +589,18 @@
         }))
       });
     } else {
+      if (state.lockGamepad && state.selectedGamepadId && preferred.id !== state.selectedGamepadId && isPedalGamepad(preferred)) {
+        detailedLogger.record("gamepad_lock_recovered", {
+          previousId: state.selectedGamepadId,
+          recovered: {
+            id: preferred.id,
+            index: preferred.index
+          }
+        }, true);
+        state.selectedGamepadId = preferred.id;
+        localStorage.setItem(`${bridge.STORAGE_PREFIX}selectedGamepadId`, preferred.id);
+      }
+
       els.gamepadSelect.value = String(preferred.index);
       rebuildAxisOptions(preferred.axes.length);
       setPill(els.gamepadStatus, "Gamepad connected", true);
@@ -472,6 +620,49 @@
 
     updateButtons();
     maybeAutoStart();
+  }
+
+  function renderGamepadList(pads, preferred) {
+    if (!els.gamepadList) return;
+
+    els.gamepadList.textContent = "";
+    if (pads.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "gamepad-item muted";
+      empty.textContent = "No browser-visible gamepads.";
+      els.gamepadList.append(empty);
+      return;
+    }
+
+    pads.forEach((pad) => {
+      const item = document.createElement("div");
+      const classes = ["gamepad-item"];
+      if (preferred && pad.index === preferred.index) classes.push("active");
+      if (isPedalGamepad(pad)) classes.push("pedal-device");
+      if (isRemoteGamepad(pad)) classes.push("remote-device");
+      item.className = classes.join(" ");
+
+      const title = document.createElement("strong");
+      title.textContent = `${pad.index}: ${pad.id}`;
+
+      const meta = document.createElement("span");
+      const kind = isPedalGamepad(pad) ? "pedal candidate" : isRemoteGamepad(pad) ? "remote/controller ignored" : "visible, not auto-selected";
+      meta.textContent = `${pad.axes.length} axes / ${pad.buttons.length} buttons - ${kind}`;
+
+      item.append(title, meta);
+      els.gamepadList.append(item);
+    });
+  }
+
+  function startGamepadScanner() {
+    window.clearInterval(state.gamepadScanTimer);
+    state.gamepadScanTimer = window.setInterval(() => {
+      const pads = getGamepads();
+      const signature = gamepadListSignature(pads);
+      if (signature !== state.gamepadSignature) {
+        refreshGamepads();
+      }
+    }, 500);
   }
 
   function pedalSample(pad, control) {
@@ -792,9 +983,158 @@
 
     lines.forEach((line) => {
       if (!line) return;
-      writeStatus(`Arduino: ${line}`);
-      detailedLogger.record("serial_rx", { line });
+      const cleanLine = cleanSerialLine(line);
+      state.serialLastRx = performance.now();
+      if (els.arduinoRx) {
+        els.arduinoRx.textContent = cleanLine || "Unreadable serial data";
+      }
+
+      detectSerialProtocol(cleanLine);
+      if (isBridgeSerialLine(cleanLine)) {
+        state.serialConfirmed = true;
+        state.serialUnexpectedRx = "";
+      } else if (!state.serialConfirmed) {
+        state.serialUnexpectedRx = cleanLine || "Unreadable serial data";
+      }
+
+      updateSerialStatus();
+      updateButtons();
+      maybeAutoStart();
+      writeStatus(`${state.serialConfirmed ? "Arduino" : "Serial"}: ${cleanLine}`);
+      detailedLogger.record(state.serialConfirmed ? "serial_rx" : "serial_rx_unrecognized", {
+        line: cleanLine,
+        rawLength: String(line).length
+      });
     });
+  }
+
+  async function writeSerialRaw(line) {
+    if (isLocalBridgeTransport()) {
+      await writeLocalBridge(line);
+      return;
+    }
+
+    const writer = state.writer;
+    if (!writer) return;
+
+    const data = encoder.encode(line);
+    state.serialWriteQueue = state.serialWriteQueue
+      .catch(() => {
+        // Keep the queue alive after a failed write; the caller handles the error.
+      })
+      .then(async () => {
+        if (state.writer !== writer) return;
+        await writer.write(data);
+      });
+
+    await state.serialWriteQueue;
+  }
+
+  async function fetchLocalBridge(path, options = {}) {
+    const response = await fetch(`${bridge.LOCAL_BRIDGE_URL}${path}`, {
+      cache: "no-store",
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      }
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.error || `Local bridge HTTP ${response.status}`);
+    }
+
+    return payload;
+  }
+
+  function handleLocalBridgeStatus(payload) {
+    if (!payload) return;
+
+    state.localBridgeConnected = Boolean(payload.ok);
+    const rxCount = Number(payload.rxCount) || 0;
+    if (rxCount > state.localBridgeRxCount) {
+      const newCount = rxCount - state.localBridgeRxCount;
+      const rxLines = Array.isArray(payload.rxLines) ? payload.rxLines.slice(-newCount) : [];
+      rxLines.forEach((line) => handleSerialText(`${line}\n`));
+      if (rxLines.length === 0 && payload.rxLast) {
+        handleSerialText(`${payload.rxLast}\n`);
+      }
+      state.localBridgeRxCount = rxCount;
+    }
+    updateSerialStatus();
+    updateButtons();
+  }
+
+  async function writeLocalBridge(line) {
+    if (!state.localBridgeConnected) return;
+
+    const payload = await fetchLocalBridge("/send", {
+      method: "POST",
+      body: JSON.stringify({ line })
+    });
+    handleLocalBridgeStatus(payload);
+  }
+
+  function startLocalBridgePolling() {
+    window.clearInterval(state.localBridgePollTimer);
+    state.localBridgePollTimer = window.setInterval(() => {
+      if (!state.localBridgeConnected || !isLocalBridgeTransport()) return;
+      fetchLocalBridge("/status")
+        .then(handleLocalBridgeStatus)
+        .catch((error) => {
+          state.localBridgeConnected = false;
+          writeStatus(`Local bridge disconnected: ${error.message}`);
+          updateSerialStatus();
+          updateButtons();
+        });
+    }, 500);
+  }
+
+  function stopLocalBridgePolling() {
+    window.clearInterval(state.localBridgePollTimer);
+    state.localBridgePollTimer = 0;
+  }
+
+  async function sendSerialProbe(reason) {
+    if (!state.writer) return;
+
+    try {
+      await writeSerialRaw(bridge.SERIAL_PING_LINE);
+      detailedLogger.record("serial_probe", { reason }, reason !== "periodic");
+    } catch (error) {
+      stopBridge();
+      state.serialConfirmed = false;
+      updateSerialStatus();
+      writeStatus(error.message);
+      detailedLogger.record("serial_write_error", { message: error.message });
+    }
+  }
+
+  function startSerialProbe() {
+    window.clearInterval(state.serialProbeTimer);
+    state.serialProbeTimer = window.setInterval(() => {
+      if (!state.writer) return;
+      if (state.running) {
+        updateSerialStatus();
+        updateHealth(selectedGamepad());
+        return;
+      }
+
+      const now = performance.now();
+      const rxAge = state.serialLastRx ? now - state.serialLastRx : Number.POSITIVE_INFINITY;
+      const inBootProbeBurst = state.serialProbeUntil && now < state.serialProbeUntil;
+      if (inBootProbeBurst || !state.serialConfirmed || rxAge > bridge.SERIAL_PROBE_MS * 8) {
+        sendSerialProbe(inBootProbeBurst ? "boot_burst" : "periodic").catch((error) => writeStatus(error.message));
+      }
+      updateSerialStatus();
+      updateHealth(selectedGamepad());
+    }, bridge.SERIAL_PROBE_MS);
+  }
+
+  function stopSerialProbe() {
+    window.clearInterval(state.serialProbeTimer);
+    state.serialProbeTimer = 0;
   }
 
   async function openSerialPort(port, message) {
@@ -802,15 +1142,34 @@
       await port.open({ baudRate: bridge.SERIAL_BAUD_RATE });
       state.port = port;
       state.writer = port.writable.getWriter();
+      state.serialConfirmed = false;
+      state.serialOpenedAt = performance.now();
+      state.serialLastRx = 0;
+      state.serialUnexpectedRx = "";
+      state.serialRxBuffer = "";
+      state.serialProtocol = bridge.SERIAL_PROTOCOL_DEFAULT;
+      state.serialProbeUntil = state.serialOpenedAt + bridge.SERIAL_PROBE_BURST_MS;
+      if (els.arduinoRx) {
+        els.arduinoRx.textContent = "Waiting...";
+      }
       startSerialReader(port);
-      setPill(els.serialStatus, "Serial connected", true);
+      startSerialProbe();
+      updateSerialStatus();
       writeStatus(message || `Serial connected at ${bridge.SERIAL_BAUD_RATE}.`);
       detailedLogger.record("serial_opened", {
         message: message || `Serial connected at ${bridge.SERIAL_BAUD_RATE}.`
       });
       updateButtons();
-      await sendRestKeepalive("serial_opened");
-      maybeAutoStart();
+      window.setTimeout(() => {
+        if (state.port !== port || !state.writer) return;
+        sendSerialProbe("boot_delay").catch((error) => writeStatus(error.message));
+        writeSerialRaw(bridge.REST_LINE).catch((error) => writeStatus(error.message));
+      }, bridge.SERIAL_BOOT_GRACE_MS);
+      detailedLogger.record("serial_wakeup", {
+        outputLine: bridge.REST_LINE.trim(),
+        delayMs: bridge.SERIAL_BOOT_GRACE_MS
+      }, true);
+      requestAutoStartRetry(20000);
     } catch (error) {
       try {
         if (port && port.readable !== null) {
@@ -821,13 +1180,25 @@
       }
       state.port = null;
       state.writer = null;
-      setPill(els.serialStatus, "Serial disconnected", false);
+      state.serialConfirmed = false;
+      state.serialUnexpectedRx = "";
+      stopSerialProbe();
+      updateSerialStatus();
       updateButtons();
       throw error;
     }
   }
 
   async function connectSerial() {
+    if (isLocalBridgeTransport()) {
+      if (state.localBridgeConnected) {
+        disconnectLocalBridge();
+      } else {
+        await connectLocalBridge();
+      }
+      return;
+    }
+
     if (!("serial" in navigator)) {
       writeStatus("Web Serial is unavailable. Use Chrome or Edge.");
       return;
@@ -842,7 +1213,41 @@
     await openSerialPort(port, `Serial connected at ${bridge.SERIAL_BAUD_RATE}.`);
   }
 
+  async function connectLocalBridge() {
+    try {
+      state.localBridgeRxCount = 0;
+      const payload = await fetchLocalBridge("/status");
+      state.localBridgeConnected = true;
+      handleLocalBridgeStatus(payload);
+      startLocalBridgePolling();
+      writeStatus("Local COM bridge connected.");
+      updateButtons();
+      await sendSerialProbe("local_bridge_connect");
+      await sendLine(bridge.REST_LINE);
+      requestAutoStartRetry(20000);
+    } catch (error) {
+      state.localBridgeConnected = false;
+      updateSerialStatus();
+      updateButtons();
+      writeStatus(`Local bridge unavailable: ${error.message}`);
+    }
+  }
+
+  function disconnectLocalBridge() {
+    state.localBridgeConnected = false;
+    state.localBridgeRxCount = 0;
+    stopLocalBridgePolling();
+    updateSerialStatus();
+    updateButtons();
+    writeStatus("Local COM bridge disconnected.");
+  }
+
   async function disconnectSerial() {
+    if (isLocalBridgeTransport()) {
+      disconnectLocalBridge();
+      return;
+    }
+
     stopBridge();
 
     const reader = state.reader;
@@ -851,6 +1256,14 @@
     state.reader = null;
     state.writer = null;
     state.port = null;
+    state.serialConfirmed = false;
+    state.serialOpenedAt = 0;
+    state.serialLastRx = 0;
+    state.serialUnexpectedRx = "";
+    state.serialProtocol = bridge.SERIAL_PROTOCOL_DEFAULT;
+    state.serialProbeUntil = 0;
+    stopSerialProbe();
+    stopLocalBridgePolling();
 
     try {
       if (reader) {
@@ -871,12 +1284,16 @@
       writeStatus(`Serial disconnect warning: ${error.message}`);
     }
 
-    setPill(els.serialStatus, "Serial disconnected", false);
+    if (els.arduinoRx) {
+      els.arduinoRx.textContent = "No data";
+    }
+    updateSerialStatus();
     detailedLogger.record("serial_closed", {}, true);
     updateButtons();
   }
 
   async function reconnectGrantedSerial() {
+    if (isLocalBridgeTransport()) return;
     if (!("serial" in navigator) || state.writer) return;
 
     const ports = await navigator.serial.getPorts();
@@ -886,13 +1303,32 @@
   }
 
   async function sendLine(line) {
-    if (!state.writer) return;
-    await state.writer.write(encoder.encode(line));
+    if (!canSendPedals()) return;
+    await writeSerialRaw(line);
     telemetry.markTx(line);
   }
 
+  async function sendManualCommand(command, label) {
+    if (!canSendPedals()) {
+      writeStatus("Serial is not connected.");
+      return;
+    }
+
+    stopBridge();
+    window.clearInterval(state.manualStreamTimer);
+    const line = `${command}\n`;
+    await sendLine(line);
+    state.lastLine = line;
+    state.lastSend = performance.now();
+    writeStatus(`Manual command: ${label} (${command})`);
+    detailedLogger.record("manual_serial_command", {
+      label,
+      command
+    }, true);
+  }
+
   async function sendRestKeepalive(reason) {
-    if (!state.writer) return;
+    if (!canSendPedals()) return;
 
     const now = performance.now();
     if (now < state.manualHoldUntil) return;
@@ -907,22 +1343,129 @@
     });
   }
 
-  async function sendManualLine(line, label) {
-    if (!state.writer) {
+  async function sendManualLine(lineOrValues, label) {
+    if (!canSendPedals()) {
       writeStatus("Serial is not connected.");
       return;
     }
 
     stopBridge();
-    await sendLine(line);
-    state.lastLine = line;
-    state.lastSend = performance.now();
-    state.manualHoldUntil = line === bridge.REST_LINE ? 0 : state.lastSend + 3000;
-    writeStatus(`Manual send: ${label} (${line.trim()})`);
+    window.clearInterval(state.manualStreamTimer);
+
+    const lineForCurrentProtocol = () => (
+      typeof lineOrValues === "string" ? lineOrValues : formatPedalLine(lineOrValues)
+    );
+    const initialLine = lineForCurrentProtocol();
+
+    if (initialLine === bridge.REST_LINE) {
+      const line = lineForCurrentProtocol();
+      await sendLine(line);
+      state.lastLine = line;
+      state.lastSend = performance.now();
+      state.manualHoldUntil = 0;
+      writeStatus(`Manual send: ${label} (${line.trim()})`);
+    } else {
+      state.manualHoldUntil = performance.now() + 3000;
+      const rate = Math.max(10, Math.min(120, Number(els.rate.value) || 50));
+      const period = 1000 / rate;
+      const streamLine = async () => {
+        if (!canSendPedals()) {
+          window.clearInterval(state.manualStreamTimer);
+          return;
+        }
+
+        if (performance.now() >= state.manualHoldUntil) {
+          window.clearInterval(state.manualStreamTimer);
+          state.manualHoldUntil = 0;
+          await sendLine(bridge.REST_LINE);
+          state.lastLine = bridge.REST_LINE;
+          state.lastSend = performance.now();
+          writeStatus("Manual test complete. Outputs at rest.");
+          return;
+        }
+
+        const line = lineForCurrentProtocol();
+        await sendLine(line);
+        state.lastLine = line;
+        state.lastSend = performance.now();
+      };
+
+      await streamLine();
+      state.manualStreamTimer = window.setInterval(() => {
+        streamLine().catch((error) => writeStatus(error.message));
+      }, period);
+      writeStatus(`Manual stream: ${label} (${line.trim()})`);
+    }
+
     detailedLogger.record("manual_serial_tx", {
       label,
-      outputLine: line.trim()
+      outputLine: initialLine.trim(),
+      serialProtocol: state.serialProtocol,
+      streamMs: initialLine === bridge.REST_LINE ? 0 : 3000
     }, true);
+  }
+
+  async function startSweepTest(pedal = "throttle") {
+    if (!canSendPedals()) {
+      writeStatus("Serial is not connected.");
+      return;
+    }
+
+    stopBridge();
+    window.clearInterval(state.manualStreamTimer);
+
+    const startedAt = performance.now();
+    const durationMs = 12000;
+    const periodMs = 100;
+    const pedalKeys = { clutch: "C", brake: "B", throttle: "T" };
+    const commandPrefix = pedalKeys[pedal] || "T";
+
+    const streamSweep = async () => {
+      if (!canSendPedals()) {
+        window.clearInterval(state.manualStreamTimer);
+        return;
+      }
+
+      const elapsed = performance.now() - startedAt;
+      if (elapsed >= durationMs) {
+        window.clearInterval(state.manualStreamTimer);
+        state.manualStreamTimer = 0;
+        await sendManualCommand("R", "sweep complete rest");
+        return;
+      }
+
+      const phase = (elapsed % 4000) / 4000;
+      const pct = Math.round(phase < 0.5 ? phase * 200 : (1 - phase) * 200);
+      const command = `${commandPrefix}${pct}`;
+      await sendLine(`${command}\n`);
+      state.lastLine = `${command}\n`;
+      state.lastSend = performance.now();
+      writeStatus(`Sweep ${pedal}: ${pct}% (${command})`);
+    };
+
+    await streamSweep();
+    state.manualStreamTimer = window.setInterval(() => {
+      streamSweep().catch((error) => writeStatus(error.message));
+    }, periodMs);
+    detailedLogger.record("manual_sweep_started", {
+      pedal,
+      durationMs,
+      periodMs
+    }, true);
+  }
+
+  async function runTick() {
+    if (state.tickBusy) {
+      state.skippedTicks++;
+      return;
+    }
+
+    state.tickBusy = true;
+    try {
+      await tick();
+    } finally {
+      state.tickBusy = false;
+    }
   }
 
   async function tick() {
@@ -930,7 +1473,8 @@
       try {
         await sendRestKeepalive("bridge_stopped");
       } catch (error) {
-        setPill(els.serialStatus, "Serial disconnected", false);
+        state.serialConfirmed = false;
+        updateSerialStatus();
         writeStatus(error.message);
         detailedLogger.record("serial_write_error", { message: error.message });
       }
@@ -940,7 +1484,8 @@
     if (!pad) {
       detailedLogger.record("sample_no_gamepad", {
         running: state.running,
-        serialConnected: Boolean(state.writer)
+        serialConnected: canSendPedals(),
+        serialConfirmed: state.serialConfirmed
       });
       setPill(els.gamepadStatus, "Gamepad disconnected", false);
       bridge.PEDAL_ORDER.forEach((key) => setPedal(controls[key], 0));
@@ -975,14 +1520,19 @@
     });
     telemetry.markSample(output);
 
-    const line = `${output.clutch},${output.brake},${output.throttle}\n`;
+    const line = formatPedalLine(output);
     const now = performance.now();
-    const shouldSend = state.running && state.writer && (line !== state.lastLine || now - state.lastSend >= bridge.SERIAL_HEARTBEAT_MS);
+    const txMode = els.txMode.value || bridge.TX_MODE_DEFAULT;
+    const shouldSend = state.running && canSendPedals() && (
+      txMode === bridge.TX_MODE_CONTINUOUS ||
+      line !== state.lastLine ||
+      now - state.lastSend >= bridge.SERIAL_HEARTBEAT_MS
+    );
     let sent = false;
     let sendReason = "none";
 
     if (shouldSend) {
-      sendReason = line !== state.lastLine ? "changed" : "heartbeat";
+      sendReason = line !== state.lastLine ? "changed" : "stream";
       state.lastLine = line;
       state.lastSend = now;
       try {
@@ -991,7 +1541,8 @@
         els.sendStatus.textContent = `Sending ${line.trim()}`;
       } catch (error) {
         stopBridge();
-        setPill(els.serialStatus, "Serial disconnected", false);
+        state.serialConfirmed = false;
+        updateSerialStatus();
         writeStatus(error.message);
         detailedLogger.record("serial_write_error", { message: error.message });
       }
@@ -999,7 +1550,9 @@
 
     detailedLogger.record("sample", {
       running: state.running,
-      serialConnected: Boolean(state.writer),
+      serialConnected: canSendPedals(),
+      serialConfirmed: state.serialConfirmed,
+      serialLastRxAgeMs: state.serialLastRx ? performance.now() - state.serialLastRx : null,
       gamepad: {
         id: pad.id,
         index: pad.index,
@@ -1020,8 +1573,11 @@
       outputLine: line.trim(),
       sent,
       sendReason,
+      skippedTicks: state.skippedTicks,
       settings: {
         pedalProfile: els.pedalProfile.value,
+        serialProtocol: state.serialProtocol,
+        txMode,
         deadzonePct: Number(els.deadzone.value),
         dropoutGuardMs: currentDropoutGuards(),
         throttleDropoutGuardMs: Number(els.throttleDropoutGuard.value)
@@ -1033,8 +1589,13 @@
 
   function updateHealth(pad, output = null) {
     health.update({
+      now: performance.now(),
       running: state.running,
-      serialConnected: Boolean(state.writer),
+      serialConnected: canSendPedals(),
+      serialConfirmed: isLocalBridgeTransport() ? state.localBridgeConnected : state.serialConfirmed,
+      serialOpenAgeMs: state.serialOpenedAt ? performance.now() - state.serialOpenedAt : 0,
+      serialLastRxAgeMs: state.serialLastRx ? performance.now() - state.serialLastRx : null,
+      serialUnexpectedRx: state.serialUnexpectedRx,
       hasGamepad: Boolean(pad),
       lockGamepad: state.lockGamepad,
       selectedGamepadId: state.selectedGamepadId,
@@ -1044,6 +1605,8 @@
       dropoutGuardMs: currentDropoutGuards(),
       txRateHz: telemetry.state.txWindow.length,
       configuredRateHz: Number(els.rate.value) || 0,
+      txMode: els.txMode.value || bridge.TX_MODE_DEFAULT,
+      minimumTxRateHz: Math.floor((Number(els.rate.value) || 0) * 0.8),
       deadzonePct: Number(els.deadzone.value) || 0,
       customCurve: els.pedalProfile.value === "custom" ? currentCustomCurve() : null,
       output
@@ -1061,6 +1624,16 @@
     if (action.type === "refresh_gamepads") {
       refreshGamepads();
       writeStatus("Recommendation applied: gamepads refreshed.");
+    }
+
+    if (action.type === "disconnect_serial") {
+      disconnectSerial().catch((error) => writeStatus(error.message));
+      writeStatus("Recommendation applied: serial disconnected.");
+    }
+
+    if (action.type === "send_probe") {
+      sendSerialProbe("recommendation").catch((error) => writeStatus(error.message));
+      writeStatus("Recommendation applied: Arduino ping sent.");
     }
 
     if (action.type === "set_rate") {
@@ -1114,25 +1687,60 @@
   }
 
   function startBridge() {
+    if (!canSendPedals()) {
+      writeStatus("Serial is not connected.");
+      updateButtons();
+      return;
+    }
+
     state.running = true;
     const rate = Math.max(10, Math.min(120, Number(els.rate.value) || 50));
     window.clearInterval(state.timer);
-    state.timer = window.setInterval(tick, 1000 / rate);
+    state.timer = window.setInterval(runTick, 1000 / rate);
+    runTick();
     setPill(els.sendStatus, "Running", true);
     detailedLogger.record("bridge_started", { settings: currentSettings() });
     updateButtons();
   }
 
+  function cancelAutoStartRetry() {
+    window.clearInterval(state.autoStartRetryTimer);
+    state.autoStartRetryTimer = 0;
+    state.autoStartDeadline = 0;
+  }
+
+  function requestAutoStartRetry(durationMs = 15000) {
+    if (!state.autoStart || state.running) return;
+
+    state.autoStartDeadline = Math.max(state.autoStartDeadline, performance.now() + durationMs);
+    maybeAutoStart();
+    if (state.running || state.autoStartRetryTimer) return;
+
+    state.autoStartRetryTimer = window.setInterval(() => {
+      if (!state.autoStart || state.running || performance.now() > state.autoStartDeadline) {
+        cancelAutoStartRetry();
+        return;
+      }
+
+      refreshGamepads();
+      maybeAutoStart();
+    }, 500);
+  }
+
   function maybeAutoStart() {
-    if (state.autoStart && !state.running && state.writer && selectedGamepad()) {
+    if (state.autoStart && !state.running && canSendPedals() && selectedGamepad()) {
+      cancelAutoStartRetry();
       startBridge();
     }
   }
 
   function stopBridge() {
     state.running = false;
+    cancelAutoStartRetry();
     window.clearInterval(state.timer);
-    state.timer = window.setInterval(tick, 120);
+    window.clearInterval(state.manualStreamTimer);
+    state.manualStreamTimer = 0;
+    state.timer = window.setInterval(runTick, 120);
     els.sendStatus.classList.remove("ok", "warn");
     els.sendStatus.textContent = "Stopped";
     detailedLogger.record("bridge_stopped", { settings: currentSettings() });
@@ -1141,21 +1749,30 @@
 
   function updateButtons() {
     const hasPad = Boolean(selectedGamepad());
-    const hasSerial = Boolean(state.writer);
-    els.connectSerial.textContent = hasSerial ? "Disconnect Serial" : "Connect Serial";
+    const hasPort = Boolean(state.writer);
+    const hasSerial = canSendPedals();
+    els.connectSerial.textContent = isLocalBridgeTransport()
+      ? state.localBridgeConnected ? "Disconnect Bridge" : "Connect Bridge"
+      : hasPort ? "Disconnect Serial" : "Connect Serial";
     els.startBridge.disabled = state.running || !hasPad || !hasSerial;
     els.stopBridge.disabled = !state.running;
     els.connectSerial.disabled = false;
+    els.testClutch.disabled = !hasSerial;
+    els.testBrake.disabled = !hasSerial;
     els.testThrottle.disabled = !hasSerial;
     els.testRest.disabled = !hasSerial;
+    els.testSweep.disabled = !hasSerial;
     renderCalibration();
   }
 
   function bindEvents() {
     els.refreshGamepads.addEventListener("click", refreshGamepads);
     els.connectSerial.addEventListener("click", () => connectSerial().catch((error) => writeStatus(error.message)));
-    els.testThrottle.addEventListener("click", () => sendManualLine("0,0,50\n", "throttle 50%").catch((error) => writeStatus(error.message)));
-    els.testRest.addEventListener("click", () => sendManualLine(bridge.REST_LINE, "rest").catch((error) => writeStatus(error.message)));
+    els.testClutch.addEventListener("click", () => sendManualCommand("C50", "clutch 50%").catch((error) => writeStatus(error.message)));
+    els.testBrake.addEventListener("click", () => sendManualCommand("B50", "brake 50%").catch((error) => writeStatus(error.message)));
+    els.testThrottle.addEventListener("click", () => sendManualCommand("T50", "throttle 50%").catch((error) => writeStatus(error.message)));
+    els.testRest.addEventListener("click", () => sendManualCommand("R", "rest").catch((error) => writeStatus(error.message)));
+    els.testSweep.addEventListener("click", () => startSweepTest("throttle").catch((error) => writeStatus(error.message)));
     els.startBridge.addEventListener("click", startBridge);
     els.stopBridge.addEventListener("click", stopBridge);
 
@@ -1200,6 +1817,20 @@
       localStorage.setItem(`${bridge.STORAGE_PREFIX}rate`, els.rate.value);
       if (state.running) startBridge();
     });
+    els.serialTransport.addEventListener("change", () => {
+      localStorage.setItem(`${bridge.STORAGE_PREFIX}serialTransport`, els.serialTransport.value);
+      stopBridge();
+      updateSerialStatus();
+      updateButtons();
+      writeStatus(els.serialTransport.value === bridge.TRANSPORT_LOCAL_BRIDGE
+        ? "Local COM bridge selected. Start tools/local_serial_http_bridge.ps1 first."
+        : "Browser Web Serial selected.");
+    });
+    els.txMode.addEventListener("change", () => {
+      localStorage.setItem(`${bridge.STORAGE_PREFIX}txMode`, els.txMode.value);
+      detailedLogger.record("tx_mode_changed", { txMode: els.txMode.value }, true);
+      tick();
+    });
     els.deadzone.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}deadzone`, els.deadzone.value);
       tick();
@@ -1219,7 +1850,7 @@
     els.autoStart.addEventListener("change", () => {
       state.autoStart = els.autoStart.checked;
       localStorage.setItem(`${bridge.STORAGE_PREFIX}autoStart`, String(state.autoStart));
-      maybeAutoStart();
+      requestAutoStartRetry(15000);
     });
     els.savePreset.addEventListener("click", () => {
       const name = els.presetName.value.trim() || "Default";
@@ -1281,6 +1912,12 @@
       const selectedIndex = Number(els.gamepadSelect.value);
       const pad = getGamepads().find((gamepad) => gamepad.index === selectedIndex);
       if (pad) {
+        if (!isPedalGamepad(pad)) {
+          writeStatus(`Ignored non-pedal gamepad: ${pad.id}`);
+          refreshGamepads();
+          return;
+        }
+
         state.selectedGamepadId = pad.id;
         localStorage.setItem(`${bridge.STORAGE_PREFIX}selectedGamepadId`, pad.id);
         detailedLogger.record("gamepad_locked", {
@@ -1323,6 +1960,22 @@
     window.addEventListener("gamepaddisconnected", refreshGamepads);
   }
 
+  function applyStartupOptions() {
+    const params = new URLSearchParams(window.location.search);
+    const transport = params.get("transport");
+
+    if (transport === bridge.TRANSPORT_LOCAL_BRIDGE || transport === bridge.TRANSPORT_WEB_SERIAL) {
+      els.serialTransport.value = transport;
+      localStorage.setItem(`${bridge.STORAGE_PREFIX}serialTransport`, transport);
+    }
+
+    if (params.get("autostart") === "1") {
+      state.autoStart = true;
+      els.autoStart.checked = true;
+      localStorage.setItem(`${bridge.STORAGE_PREFIX}autoStart`, "true");
+    }
+  }
+
   function init() {
     if (!("serial" in navigator)) {
       writeStatus("Open this page in Chrome or Edge with Web Serial support.");
@@ -1330,13 +1983,19 @@
 
     bindEvents();
     loadSavedSettings();
+    applyStartupOptions();
     detailedLogger.updateButtons();
     refreshPresetSelect();
     renderCalibration();
     refreshGamepads();
+    startGamepadScanner();
     drawCurvePreview();
     stopBridge();
-    reconnectGrantedSerial().catch((error) => writeStatus(error.message));
+    if (isLocalBridgeTransport()) {
+      connectLocalBridge().catch((error) => writeStatus(error.message));
+    } else {
+      reconnectGrantedSerial().catch((error) => writeStatus(error.message));
+    }
   }
 
   init();
