@@ -27,6 +27,7 @@ HX711 x3 -> Arduino Nano -> high-frequency PWM -> RC filter -> divider -> PXN RJ
 - Short dropout protection for the throttle.
 - Throttle output ramp/step test mode for diagnostics.
 - Bass shaker validation: the translator box USB and PXN/base USB should share the same USB hub/reference, RJ45 pins 2, 3, and 5 should be tied to common GND, and the metal pedal frame should be bonded to the translator box GND.
+- Parallel Sim Ruito + translator-box load-cell connection is not supported; the two boards influence each other even when one is not powered.
 - Tested on a breadboard; the final board still needs better GND, filters, and decoupling.
 
 ## Main Hardware
@@ -101,6 +102,17 @@ const bool TEST_THROTTLE_OUTPUT = false;
 
 When enabled, it ignores the throttle HX711 and generates steps/a ramp on the throttle PWM output. This helps separate pedal-reading problems from analog-output problems at the base.
 
+## PC Serial Bridge Mode
+
+There is also a separate firmware/script path that keeps the original Sim Ruito board responsible for reading the load cells and sends pedal percentages from the PC to the Arduino over USB serial:
+
+- Arduino firmware: `serial_pedal_bridge/serial_pedal_bridge.ino`
+- Browser bridge: `tools/gamepad_serial_bridge.html`
+- Optional Python helper: `tools/sim_ruito_to_serial.py`
+- Documentation: [docs/09_pc_serial_bridge.md](docs/09_pc_serial_bridge.md)
+
+Use this mode when the PC is already required for SimHub/bass shakers and the HX711 translator should not be connected to the same load cells as the original Sim Ruito board.
+
 ## Documentation
 
 | File | Contents |
@@ -113,10 +125,12 @@ When enabled, it ignores the throttle HX711 and generates steps/a ramp on the th
 | [docs/06_calibration.md](docs/06_calibration.md) | Calibration procedure |
 | [docs/07_component_list.md](docs/07_component_list.md) | Component list |
 | [docs/08_tests_and_diagnostics.md](docs/08_tests_and_diagnostics.md) | Completed tests and how to repeat them |
+| [docs/09_pc_serial_bridge.md](docs/09_pc_serial_bridge.md) | PC-to-Arduino serial bridge mode |
 
 ## Warnings
 
 - Do not inject 5 V directly into PXN signal pins.
 - RJ45 pins 7 and 8 are the base 3.3 V reference, not a power supply.
+- Do not keep the original Sim Ruito board and the HX711 translator connected to the same load cells at the same time. Use a selector/relay/connector swap that disconnects `E+`, `E-`, `S+`, and `S-` from the unused board.
 - Breadboards can cause bad contacts, ripple, and GND issues. The final board should use short traces, a well-distributed GND, and capacitors close to the HX711 modules and filters.
 - This project is experimental. Validate voltages with a multimeter before connecting it to the base.

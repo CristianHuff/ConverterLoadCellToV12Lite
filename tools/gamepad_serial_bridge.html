@@ -1,0 +1,1229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gamepad Serial Pedal Bridge</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7f8;
+      --panel: #ffffff;
+      --text: #182024;
+      --muted: #66747c;
+      --line: #d6dde1;
+      --accent: #147c68;
+      --accent-weak: #dff2ed;
+      --warn: #b7791f;
+      --danger: #b42318;
+      --track: #e8edf0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0;
+    }
+
+    main {
+      width: min(1180px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 24px 0;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 18px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.5rem, 3vw, 2.1rem);
+      font-weight: 720;
+    }
+
+    .status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 0 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.9rem;
+      white-space: nowrap;
+    }
+
+    .pill.ok {
+      border-color: #8bd2c1;
+      background: var(--accent-weak);
+      color: #0b5f50;
+    }
+
+    .pill.warn {
+      border-color: #e6c37b;
+      background: #fff7e6;
+      color: var(--warn);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 380px) 1fr;
+      gap: 16px;
+      margin-top: 18px;
+      align-items: start;
+    }
+
+    section {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 0.86rem;
+      font-weight: 650;
+    }
+
+    select,
+    input,
+    button {
+      min-height: 38px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    select,
+    input {
+      width: 100%;
+      padding: 0 10px;
+    }
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-weight: 700;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .pedals {
+      display: grid;
+      gap: 12px;
+    }
+
+    .pedal {
+      display: grid;
+      grid-template-columns: 92px 1fr 54px;
+      gap: 12px;
+      align-items: center;
+      min-height: 40px;
+    }
+
+    .bar {
+      height: 16px;
+      border-radius: 999px;
+      background: var(--track);
+      overflow: hidden;
+    }
+
+    .fill {
+      width: 0%;
+      height: 100%;
+      background: var(--accent);
+      transition: width 80ms linear;
+    }
+
+    .value {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+
+    .axis-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+
+    .axis {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .axis-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.85rem;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 8px;
+    }
+
+    .map-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .map-panel {
+      display: grid;
+      gap: 8px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 38px;
+      color: var(--text);
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+
+    .check input {
+      width: 18px;
+      min-height: 18px;
+    }
+
+    .log {
+      min-height: 56px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfc;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 0.86rem;
+      white-space: pre-wrap;
+    }
+
+    @media (max-width: 860px) {
+      header {
+        display: grid;
+      }
+
+      .status {
+        justify-content: flex-start;
+      }
+
+      .grid,
+      .map-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Gamepad Serial Pedal Bridge</h1>
+      <div class="status">
+        <span class="pill warn" id="gamepadStatus">Gamepad disconnected</span>
+        <span class="pill warn" id="serialStatus">Serial disconnected</span>
+        <span class="pill" id="sendStatus">Stopped</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="stack">
+        <h2>Connection</h2>
+        <label>
+          Gamepad
+          <select id="gamepadSelect"></select>
+        </label>
+        <label class="check"><input id="lockGamepad" type="checkbox" checked>Lock selected gamepad</label>
+        <div class="actions">
+          <button id="refreshGamepads">Refresh</button>
+          <button class="primary" id="connectSerial">Connect Serial</button>
+        </div>
+        <div class="actions">
+          <button id="testThrottle" disabled>Test 50%</button>
+          <button id="testRest" disabled>Test Rest</button>
+        </div>
+        <div class="actions">
+          <button class="primary" id="startBridge" disabled>Start</button>
+          <button id="stopBridge" disabled>Stop</button>
+        </div>
+        <label>
+          Send rate Hz
+          <input id="rate" type="number" min="10" max="120" step="1" value="50">
+        </label>
+        <label>
+          Deadzone %
+          <input id="deadzone" type="number" min="0" max="10" step="1" value="0">
+        </label>
+        <label>
+          Throttle dropout guard ms
+          <input id="throttleDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+        </label>
+        <label class="check"><input id="detailedLog" type="checkbox">Detailed log</label>
+        <div class="actions">
+          <button id="startLog">Start Log</button>
+          <button id="downloadLog" disabled>Download Log</button>
+        </div>
+        <div class="actions">
+          <button id="clearLog" disabled>Clear Log</button>
+          <button id="markLog" disabled>Mark Event</button>
+        </div>
+        <div class="log" id="log">Ready.</div>
+      </section>
+
+      <section class="stack">
+        <h2>Pedals</h2>
+        <div class="pedals">
+          <div class="pedal">
+            <strong>Brake</strong>
+            <div class="bar"><div class="fill" id="brakeFill"></div></div>
+            <span class="value" id="brakeValue">0%</span>
+          </div>
+          <div class="pedal">
+            <strong>Throttle</strong>
+            <div class="bar"><div class="fill" id="throttleFill"></div></div>
+            <span class="value" id="throttleValue">0%</span>
+          </div>
+          <div class="pedal">
+            <strong>Clutch</strong>
+            <div class="bar"><div class="fill" id="clutchFill"></div></div>
+            <span class="value" id="clutchValue">0%</span>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <section class="stack" style="margin-top: 16px;">
+      <h2>Axis Mapping</h2>
+      <div class="map-grid">
+        <div class="map-panel">
+          <label>Brake axis <select id="brakeAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="brakeMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="brakeMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <label class="check"><input id="brakeInvert" type="checkbox">Invert brake</label>
+        </div>
+        <div class="map-panel">
+          <label>Throttle axis <select id="throttleAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="throttleMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="throttleMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <label class="check"><input id="throttleInvert" type="checkbox">Invert throttle</label>
+        </div>
+        <div class="map-panel">
+          <label>Clutch axis <select id="clutchAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="clutchMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="clutchMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <label class="check"><input id="clutchInvert" type="checkbox">Invert clutch</label>
+        </div>
+      </div>
+    </section>
+
+    <section class="stack" style="margin-top: 16px;">
+      <h2>Live Axes</h2>
+      <div class="axis-grid" id="axisGrid"></div>
+    </section>
+  </main>
+
+  <script>
+    const STORAGE_PREFIX = "gamepadSerialBridge.";
+    const DEFAULT_MAPPING_VERSION = "sim-ruito-axis-2-3-1";
+    const SERIAL_HEARTBEAT_MS = 100;
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    const state = {
+      port: null,
+      writer: null,
+      reader: null,
+      serialRxBuffer: "",
+      running: false,
+      lastLine: "",
+      lastSend: 0,
+      timer: 0,
+      manualHoldUntil: 0,
+      lastPct: {
+        brake: 0,
+        throttle: 0,
+        clutch: 0
+      },
+      throttleDropStart: 0,
+      log: {
+        enabled: false,
+        entries: [],
+        writer: null,
+        pending: Promise.resolve(),
+        seq: 0
+      },
+      selectedGamepadId: localStorage.getItem(`${STORAGE_PREFIX}selectedGamepadId`) || "",
+      lockGamepad: localStorage.getItem(`${STORAGE_PREFIX}lockGamepad`) !== "false"
+    };
+
+    const els = {
+      gamepadStatus: document.querySelector("#gamepadStatus"),
+      serialStatus: document.querySelector("#serialStatus"),
+      sendStatus: document.querySelector("#sendStatus"),
+      gamepadSelect: document.querySelector("#gamepadSelect"),
+      lockGamepad: document.querySelector("#lockGamepad"),
+      refreshGamepads: document.querySelector("#refreshGamepads"),
+      connectSerial: document.querySelector("#connectSerial"),
+      testThrottle: document.querySelector("#testThrottle"),
+      testRest: document.querySelector("#testRest"),
+      startBridge: document.querySelector("#startBridge"),
+      stopBridge: document.querySelector("#stopBridge"),
+      rate: document.querySelector("#rate"),
+      deadzone: document.querySelector("#deadzone"),
+      throttleDropoutGuard: document.querySelector("#throttleDropoutGuard"),
+      detailedLog: document.querySelector("#detailedLog"),
+      startLog: document.querySelector("#startLog"),
+      downloadLog: document.querySelector("#downloadLog"),
+      clearLog: document.querySelector("#clearLog"),
+      markLog: document.querySelector("#markLog"),
+      log: document.querySelector("#log"),
+      axisGrid: document.querySelector("#axisGrid"),
+      brakeFill: document.querySelector("#brakeFill"),
+      throttleFill: document.querySelector("#throttleFill"),
+      clutchFill: document.querySelector("#clutchFill"),
+      brakeValue: document.querySelector("#brakeValue"),
+      throttleValue: document.querySelector("#throttleValue"),
+      clutchValue: document.querySelector("#clutchValue")
+    };
+
+    const controls = {
+      brake: {
+        key: "brake",
+        defaultAxis: 2,
+        axis: document.querySelector("#brakeAxis"),
+        min: document.querySelector("#brakeMin"),
+        max: document.querySelector("#brakeMax"),
+        invert: document.querySelector("#brakeInvert"),
+        fill: els.brakeFill,
+        value: els.brakeValue
+      },
+      throttle: {
+        key: "throttle",
+        defaultAxis: 3,
+        axis: document.querySelector("#throttleAxis"),
+        min: document.querySelector("#throttleMin"),
+        max: document.querySelector("#throttleMax"),
+        invert: document.querySelector("#throttleInvert"),
+        fill: els.throttleFill,
+        value: els.throttleValue
+      },
+      clutch: {
+        key: "clutch",
+        defaultAxis: 1,
+        axis: document.querySelector("#clutchAxis"),
+        min: document.querySelector("#clutchMin"),
+        max: document.querySelector("#clutchMax"),
+        invert: document.querySelector("#clutchInvert"),
+        fill: els.clutchFill,
+        value: els.clutchValue
+      }
+    };
+
+    function log(message) {
+      els.log.textContent = message;
+    }
+
+    function logFileName() {
+      const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+      return `pedal_bridge_${stamp}.txt`;
+    }
+
+    function currentSettings() {
+      return {
+        rateHz: Number(els.rate.value),
+        serialHeartbeatMs: SERIAL_HEARTBEAT_MS,
+        deadzonePct: Number(els.deadzone.value),
+        throttleDropoutGuardMs: Number(els.throttleDropoutGuard.value),
+        lockGamepad: els.lockGamepad.checked,
+        selectedGamepadId: state.selectedGamepadId,
+        mappings: Object.fromEntries(
+          Object.entries(controls).map(([key, control]) => [
+            key,
+            {
+              axis: Number(control.axis.value),
+              min: Number(control.min.value),
+              max: Number(control.max.value),
+              invert: control.invert.checked
+            }
+          ])
+        )
+      };
+    }
+
+    function writeLogRecord(type, data = {}, force = false) {
+      if (!state.log.enabled && !force) return;
+
+      const record = {
+        seq: state.log.seq++,
+        type,
+        wallTime: new Date().toISOString(),
+        perfMs: Math.round(performance.now() * 1000) / 1000,
+        ...data
+      };
+      const line = `${JSON.stringify(record)}\n`;
+      state.log.entries.push(line);
+
+      if (state.log.writer) {
+        state.log.pending = state.log.pending
+          .then(() => state.log.writer.write(line))
+          .catch((error) => {
+            log(`Log write failed: ${error.message}`);
+            state.log.writer = null;
+          });
+      }
+
+      if (force || (type !== "sample" && type !== "serial_keepalive")) {
+        updateLogButtons();
+      }
+    }
+
+    function updateLogButtons() {
+      els.startLog.textContent = state.log.enabled ? "Stop Log" : "Start Log";
+      els.downloadLog.disabled = state.log.entries.length === 0;
+      els.clearLog.disabled = state.log.entries.length === 0 || state.log.enabled;
+      els.markLog.disabled = !state.log.enabled;
+      els.detailedLog.checked = state.log.enabled;
+    }
+
+    async function startDetailedLog() {
+      state.log.entries = [];
+      state.log.seq = 0;
+      state.log.writer = null;
+      state.log.pending = Promise.resolve();
+
+      if ("showSaveFilePicker" in window) {
+        try {
+          const handle = await window.showSaveFilePicker({
+            suggestedName: logFileName(),
+            types: [
+              {
+                description: "Text log",
+                accept: { "text/plain": [".txt", ".jsonl"] }
+              }
+            ]
+          });
+          state.log.writer = await handle.createWritable();
+        } catch (error) {
+          if (error.name === "AbortError") {
+            log("Log file selection cancelled.");
+            updateLogButtons();
+            return;
+          }
+          log(`Using in-memory log: ${error.message}`);
+        }
+      }
+
+      state.log.enabled = true;
+      writeLogRecord("log_start", {
+        settings: currentSettings(),
+        userAgent: navigator.userAgent,
+        fileWriter: Boolean(state.log.writer)
+      }, true);
+      log(state.log.writer ? "Detailed log writing to selected file." : "Detailed log recording in memory.");
+      updateLogButtons();
+    }
+
+    async function stopDetailedLog() {
+      writeLogRecord("log_stop", { settings: currentSettings() }, true);
+      state.log.enabled = false;
+      await state.log.pending;
+      if (state.log.writer) {
+        await state.log.writer.close();
+        state.log.writer = null;
+      }
+      log(`Detailed log stopped. Records: ${state.log.entries.length}.`);
+      updateLogButtons();
+    }
+
+    function downloadDetailedLog() {
+      if (state.log.entries.length === 0) return;
+      const blob = new Blob(state.log.entries, { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = logFileName();
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function clearDetailedLog() {
+      if (state.log.enabled) return;
+      state.log.entries = [];
+      state.log.seq = 0;
+      log("Detailed log cleared.");
+      updateLogButtons();
+    }
+
+    function setPill(el, text, ok) {
+      el.textContent = text;
+      el.classList.toggle("ok", ok);
+      el.classList.toggle("warn", !ok);
+    }
+
+    function getGamepads() {
+      return Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean);
+    }
+
+    function selectedGamepad() {
+      const index = Number(els.gamepadSelect.value);
+      return navigator.getGamepads()[index] || null;
+    }
+
+    function preferredGamepad(pads) {
+      if (state.lockGamepad && state.selectedGamepadId) {
+        const locked = pads.find((pad) => pad.id === state.selectedGamepadId);
+        if (locked) return locked;
+      }
+
+      const current = pads.find((pad) => String(pad.index) === els.gamepadSelect.value);
+      if (current) return current;
+
+      const namedPedal = pads.find((pad) => /sim|ruito|pedal|wheel|joystick|usb/i.test(pad.id));
+      if (namedPedal) return namedPedal;
+
+      const nonXbox = pads.find((pad) => !/xbox|xinput|moonlight/i.test(pad.id));
+      return nonXbox || pads[0] || null;
+    }
+
+    function saveSelectedGamepad() {
+      const pad = selectedGamepad();
+      if (!pad) return;
+      state.selectedGamepadId = pad.id;
+      localStorage.setItem(`${STORAGE_PREFIX}selectedGamepadId`, pad.id);
+      log(`Locked gamepad: ${pad.id}`);
+      writeLogRecord("gamepad_locked", {
+        gamepad: {
+          id: pad.id,
+          index: pad.index,
+          axes: pad.axes.length,
+          buttons: pad.buttons.length
+        }
+      });
+    }
+
+    function axisOption(index) {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = `Axis ${index}`;
+      return option;
+    }
+
+    function rebuildAxisOptions(count) {
+      Object.values(controls).forEach((control, pedalIndex) => {
+        const fallback = Math.min(control.defaultAxis ?? pedalIndex, Math.max(count - 1, 0));
+        const saved = localStorage.getItem(`${STORAGE_PREFIX}${control.key}.axis`);
+        const previous = saved ?? String(control.defaultAxis ?? pedalIndex);
+        control.axis.textContent = "";
+        for (let i = 0; i < Math.max(count, 1); i++) {
+          control.axis.append(axisOption(i));
+        }
+        control.axis.value = Number(previous) < count ? previous : String(fallback);
+      });
+    }
+
+    function migrateDefaultMappings() {
+      if (localStorage.getItem(`${STORAGE_PREFIX}mappingVersion`) === DEFAULT_MAPPING_VERSION) {
+        return;
+      }
+
+      Object.values(controls).forEach((control) => {
+        localStorage.setItem(`${STORAGE_PREFIX}${control.key}.axis`, String(control.defaultAxis));
+      });
+      localStorage.setItem(`${STORAGE_PREFIX}mappingVersion`, DEFAULT_MAPPING_VERSION);
+    }
+
+    function loadSavedSettings() {
+      migrateDefaultMappings();
+      els.lockGamepad.checked = state.lockGamepad;
+      els.rate.value = localStorage.getItem(`${STORAGE_PREFIX}rate`) || els.rate.value;
+      const savedDeadzone = localStorage.getItem(`${STORAGE_PREFIX}deadzone`);
+      els.deadzone.value = savedDeadzone === "2" || savedDeadzone === null ? "0" : savedDeadzone;
+      localStorage.setItem(`${STORAGE_PREFIX}deadzone`, els.deadzone.value);
+      els.throttleDropoutGuard.value = localStorage.getItem(`${STORAGE_PREFIX}throttleDropoutGuard`) || els.throttleDropoutGuard.value;
+      Object.values(controls).forEach((control) => {
+        const axis = localStorage.getItem(`${STORAGE_PREFIX}${control.key}.axis`);
+        const min = localStorage.getItem(`${STORAGE_PREFIX}${control.key}.min`);
+        const max = localStorage.getItem(`${STORAGE_PREFIX}${control.key}.max`);
+        const invert = localStorage.getItem(`${STORAGE_PREFIX}${control.key}.invert`);
+
+        if (axis !== null) control.axis.value = axis;
+        if (min !== null) control.min.value = min;
+        if (max !== null) control.max.value = max;
+        if (invert !== null) control.invert.checked = invert === "true";
+      });
+    }
+
+    function savePedalSettings(control) {
+      localStorage.setItem(`${STORAGE_PREFIX}${control.key}.axis`, control.axis.value);
+      localStorage.setItem(`${STORAGE_PREFIX}${control.key}.min`, control.min.value);
+      localStorage.setItem(`${STORAGE_PREFIX}${control.key}.max`, control.max.value);
+      localStorage.setItem(`${STORAGE_PREFIX}${control.key}.invert`, String(control.invert.checked));
+    }
+
+    function refreshGamepads() {
+      const pads = getGamepads();
+      const preferred = preferredGamepad(pads);
+      els.gamepadSelect.textContent = "";
+
+      pads.forEach((pad) => {
+        const option = document.createElement("option");
+        option.value = String(pad.index);
+        option.textContent = `${pad.index}: ${pad.id}`;
+        els.gamepadSelect.append(option);
+      });
+
+      if (pads.length === 0) {
+        const option = document.createElement("option");
+        option.value = "";
+        option.textContent = "No gamepad detected";
+        els.gamepadSelect.append(option);
+        rebuildAxisOptions(1);
+        setPill(els.gamepadStatus, "Gamepad disconnected", false);
+        writeLogRecord("gamepad_refresh", { pads: [] });
+      } else {
+        els.gamepadSelect.value = String(preferred.index);
+        rebuildAxisOptions(preferred.axes.length);
+        setPill(els.gamepadStatus, "Gamepad connected", true);
+        writeLogRecord("gamepad_refresh", {
+          selectedIndex: preferred.index,
+          pads: pads.map((pad) => ({
+            id: pad.id,
+            index: pad.index,
+            axes: pad.axes.length,
+            buttons: pad.buttons.length
+          }))
+        });
+        if (!state.selectedGamepadId) {
+          saveSelectedGamepad();
+        }
+      }
+
+      updateButtons();
+    }
+
+    function clampPct(value) {
+      if (!Number.isFinite(value)) return 0;
+      return Math.max(0, Math.min(100, Math.round(value)));
+    }
+
+    function pedalSample(pad, control) {
+      const axisIndex = Number(control.axis.value);
+      const raw = pad && Number.isFinite(pad.axes[axisIndex]) ? pad.axes[axisIndex] : 0;
+      const min = Number(control.min.value);
+      const max = Number(control.max.value);
+      let pct = max === min ? 0 : ((raw - min) * 100) / (max - min);
+      if (control.invert.checked) pct = 100 - pct;
+      return {
+        axis: axisIndex,
+        raw,
+        min,
+        max,
+        invert: control.invert.checked,
+        pct: clampPct(pct)
+      };
+    }
+
+    function applyDeadzone(pct) {
+      const deadzone = Math.max(0, Math.min(10, Number(els.deadzone.value) || 0));
+      return pct <= deadzone ? 0 : pct;
+    }
+
+    function filterPedalPct(key, pct) {
+      pct = applyDeadzone(pct);
+
+      if (key !== "throttle") {
+        state.lastPct[key] = pct;
+        return pct;
+      }
+
+      const now = performance.now();
+      const guardMs = Math.max(0, Math.min(250, Number(els.throttleDropoutGuard.value) || 0));
+      const previous = state.lastPct.throttle;
+
+      if (guardMs > 0 && previous >= 95 && pct === 0) {
+        if (state.throttleDropStart === 0) {
+          state.throttleDropStart = now;
+        }
+        if ((now - state.throttleDropStart) < guardMs) {
+          return previous;
+        }
+      } else {
+        state.throttleDropStart = 0;
+      }
+
+      state.lastPct.throttle = pct;
+      return pct;
+    }
+
+    function setPedal(control, pct) {
+      control.fill.style.width = `${pct}%`;
+      control.value.textContent = `${pct}%`;
+    }
+
+    function updateAxes(pad) {
+      els.axisGrid.textContent = "";
+      const axes = pad ? pad.axes : [];
+      axes.forEach((raw, index) => {
+        const pct = clampPct(((raw + 1) / 2) * 100);
+        const item = document.createElement("div");
+        item.className = "axis";
+        item.innerHTML = `
+          <div class="axis-head"><strong>Axis ${index}</strong><span>${raw.toFixed(4)}</span></div>
+          <div class="bar"><div class="fill" style="width: ${pct}%"></div></div>
+        `;
+        els.axisGrid.append(item);
+      });
+    }
+
+    async function openSerialPort(port, message) {
+      try {
+        await port.open({ baudRate: 115200 });
+        state.port = port;
+        state.writer = port.writable.getWriter();
+        startSerialReader(port);
+        setPill(els.serialStatus, "Serial connected", true);
+        log(message || "Serial connected at 115200.");
+        writeLogRecord("serial_opened", { message: message || "Serial connected at 115200." });
+        updateButtons();
+        await sendRestKeepalive("serial_opened");
+        maybeAutoStart();
+      } catch (error) {
+        try {
+          if (port && port.readable !== null) {
+            await port.close();
+          }
+        } catch (_) {
+          // Ignore cleanup errors; the UI state below is the important part.
+        }
+        state.port = null;
+        state.writer = null;
+        setPill(els.serialStatus, "Serial disconnected", false);
+        updateButtons();
+        throw error;
+      }
+    }
+
+    async function connectSerial() {
+      if (!("serial" in navigator)) {
+        log("Web Serial is unavailable. Use Chrome or Edge.");
+        return;
+      }
+
+      if (state.writer || state.port) {
+        await disconnectSerial();
+        return;
+      }
+
+      const port = await navigator.serial.requestPort();
+      await openSerialPort(port, "Serial connected at 115200.");
+    }
+
+    async function disconnectSerial() {
+      stopBridge();
+
+      const writer = state.writer;
+      const reader = state.reader;
+      const port = state.port;
+      state.writer = null;
+      state.reader = null;
+      state.port = null;
+
+      try {
+        if (reader) {
+          await reader.cancel();
+          reader.releaseLock();
+        }
+        if (writer) {
+          writer.releaseLock();
+        }
+        if (port && port.readable !== null) {
+          await port.close();
+        }
+      } catch (error) {
+        log(`Serial disconnect warning: ${error.message}`);
+      }
+
+      setPill(els.serialStatus, "Serial disconnected", false);
+      writeLogRecord("serial_closed", {}, true);
+      updateButtons();
+    }
+
+    async function reconnectGrantedSerial() {
+      if (!("serial" in navigator) || state.writer) return;
+
+      const ports = await navigator.serial.getPorts();
+      if (ports.length === 0) return;
+
+      await openSerialPort(ports[0], "Serial reconnected at 115200.");
+    }
+
+    function handleSerialText(text) {
+      state.serialRxBuffer += text;
+      const lines = state.serialRxBuffer.split(/\r?\n/);
+      state.serialRxBuffer = lines.pop() || "";
+
+      lines.forEach((line) => {
+        if (!line) return;
+        log(`Arduino: ${line}`);
+        writeLogRecord("serial_rx", { line });
+      });
+    }
+
+    async function startSerialReader(port) {
+      if (!port.readable) return;
+
+      while (state.port === port && port.readable) {
+        const reader = port.readable.getReader();
+        state.reader = reader;
+        try {
+          while (state.port === port) {
+            const result = await reader.read();
+            if (result.done) break;
+            if (result.value) {
+              handleSerialText(decoder.decode(result.value, { stream: true }));
+            }
+          }
+        } catch (error) {
+          if (state.port === port) {
+            log(`Serial read error: ${error.message}`);
+            writeLogRecord("serial_read_error", { message: error.message });
+          }
+        } finally {
+          try {
+            reader.releaseLock();
+          } catch (_) {
+            // The reader can already be released during manual disconnect.
+          }
+          if (state.reader === reader) {
+            state.reader = null;
+          }
+        }
+      }
+    }
+
+    async function sendLine(line) {
+      if (!state.writer) return;
+      await state.writer.write(encoder.encode(line));
+    }
+
+    async function sendRestKeepalive(reason) {
+      if (!state.writer) return;
+
+      const now = performance.now();
+      if (now < state.manualHoldUntil) return;
+      if (state.lastLine === "0,0,0\n" && (now - state.lastSend) < SERIAL_HEARTBEAT_MS) return;
+
+      await sendLine("0,0,0\n");
+      state.lastLine = "0,0,0\n";
+      state.lastSend = now;
+      writeLogRecord("serial_keepalive", {
+        reason,
+        outputLine: "0,0,0"
+      });
+    }
+
+    async function sendManualLine(line, label) {
+      if (!state.writer) {
+        log("Serial is not connected.");
+        return;
+      }
+
+      stopBridge();
+      await sendLine(line);
+      state.lastLine = line;
+      state.lastSend = performance.now();
+      state.manualHoldUntil = line === "0,0,0\n" ? 0 : state.lastSend + 3000;
+      log(`Manual send: ${label} (${line.trim()})`);
+      writeLogRecord("manual_serial_tx", {
+        label,
+        outputLine: line.trim()
+      }, true);
+    }
+
+    async function tick() {
+      if (!state.running) {
+        try {
+          await sendRestKeepalive("bridge_stopped");
+        } catch (error) {
+          setPill(els.serialStatus, "Serial disconnected", false);
+          log(error.message);
+          writeLogRecord("serial_write_error", { message: error.message });
+        }
+      }
+
+      const pad = selectedGamepad();
+      if (!pad) {
+        refreshGamepads();
+        writeLogRecord("sample_no_gamepad", {
+          running: state.running,
+          serialConnected: Boolean(state.writer)
+        });
+        setPill(els.gamepadStatus, "Gamepad disconnected", false);
+        setPedal(controls.brake, 0);
+        setPedal(controls.throttle, 0);
+        setPedal(controls.clutch, 0);
+        updateAxes(null);
+        return;
+      }
+
+      if (state.lockGamepad && state.selectedGamepadId && pad.id !== state.selectedGamepadId) {
+        writeLogRecord("wrong_gamepad_selected", {
+          expectedId: state.selectedGamepadId,
+          actual: { id: pad.id, index: pad.index }
+        });
+        refreshGamepads();
+        return;
+      }
+
+      setPill(els.gamepadStatus, "Gamepad connected", true);
+      updateAxes(pad);
+
+      const brakeSample = pedalSample(pad, controls.brake);
+      const throttleSample = pedalSample(pad, controls.throttle);
+      const clutchSample = pedalSample(pad, controls.clutch);
+
+      const brake = filterPedalPct("brake", brakeSample.pct);
+      const throttle = filterPedalPct("throttle", throttleSample.pct);
+      const clutch = filterPedalPct("clutch", clutchSample.pct);
+
+      setPedal(controls.brake, brake);
+      setPedal(controls.throttle, throttle);
+      setPedal(controls.clutch, clutch);
+
+      const line = `${brake},${throttle},${clutch}\n`;
+      const now = performance.now();
+      const shouldSend = state.running && state.writer && (line !== state.lastLine || now - state.lastSend >= SERIAL_HEARTBEAT_MS);
+      let sent = false;
+      let sendReason = "none";
+      if (shouldSend) {
+        sendReason = line !== state.lastLine ? "changed" : "heartbeat";
+        state.lastLine = line;
+        state.lastSend = now;
+        try {
+          await sendLine(line);
+          sent = true;
+          els.sendStatus.textContent = `Sending ${line.trim()}`;
+        } catch (error) {
+          stopBridge();
+          setPill(els.serialStatus, "Serial disconnected", false);
+          log(error.message);
+          writeLogRecord("serial_write_error", { message: error.message });
+        }
+      }
+
+      writeLogRecord("sample", {
+        running: state.running,
+        serialConnected: Boolean(state.writer),
+        gamepad: {
+          id: pad.id,
+          index: pad.index,
+          timestamp: pad.timestamp,
+          connected: pad.connected
+        },
+        axes: pad.axes.map((value) => Math.round(value * 1000000) / 1000000),
+        buttons: pad.buttons.map((button) => ({
+          pressed: button.pressed,
+          touched: button.touched,
+          value: Math.round(button.value * 1000000) / 1000000
+        })),
+        pedals: {
+          brake: { ...brakeSample, filteredPct: brake },
+          throttle: { ...throttleSample, filteredPct: throttle },
+          clutch: { ...clutchSample, filteredPct: clutch }
+        },
+        outputLine: line.trim(),
+        sent,
+        sendReason,
+        settings: {
+          deadzonePct: Number(els.deadzone.value),
+          throttleDropoutGuardMs: Number(els.throttleDropoutGuard.value)
+        }
+      });
+    }
+
+    function startBridge() {
+      state.running = true;
+      const rate = Math.max(10, Math.min(120, Number(els.rate.value) || 50));
+      window.clearInterval(state.timer);
+      state.timer = window.setInterval(tick, 1000 / rate);
+      setPill(els.sendStatus, "Running", true);
+      writeLogRecord("bridge_started", { settings: currentSettings() });
+      updateButtons();
+    }
+
+    function maybeAutoStart() {
+      if (!state.running && state.writer && selectedGamepad()) {
+        startBridge();
+      }
+    }
+
+    function stopBridge() {
+      state.running = false;
+      window.clearInterval(state.timer);
+      state.timer = window.setInterval(tick, 120);
+      els.sendStatus.classList.remove("ok", "warn");
+      els.sendStatus.textContent = "Stopped";
+      writeLogRecord("bridge_stopped", { settings: currentSettings() });
+      updateButtons();
+    }
+
+    function updateButtons() {
+      const hasPad = Boolean(selectedGamepad());
+      const hasSerial = Boolean(state.writer);
+      els.connectSerial.textContent = hasSerial ? "Disconnect Serial" : "Connect Serial";
+      els.startBridge.disabled = state.running || !hasPad || !hasSerial;
+      els.stopBridge.disabled = !state.running;
+      els.connectSerial.disabled = false;
+      els.testThrottle.disabled = !hasSerial;
+      els.testRest.disabled = !hasSerial;
+    }
+
+    els.refreshGamepads.addEventListener("click", refreshGamepads);
+    els.connectSerial.addEventListener("click", () => connectSerial().catch((error) => log(error.message)));
+    els.testThrottle.addEventListener("click", () => sendManualLine("0,50,0\n", "throttle 50%").catch((error) => log(error.message)));
+    els.testRest.addEventListener("click", () => sendManualLine("0,0,0\n", "rest").catch((error) => log(error.message)));
+    els.startBridge.addEventListener("click", startBridge);
+    els.stopBridge.addEventListener("click", stopBridge);
+    els.startLog.addEventListener("click", () => {
+      if (state.log.enabled) {
+        stopDetailedLog().catch((error) => log(error.message));
+      } else {
+        startDetailedLog().catch((error) => log(error.message));
+      }
+    });
+    els.detailedLog.addEventListener("change", () => {
+      if (els.detailedLog.checked && !state.log.enabled) {
+        startDetailedLog().catch((error) => log(error.message));
+      } else if (!els.detailedLog.checked && state.log.enabled) {
+        stopDetailedLog().catch((error) => log(error.message));
+      }
+    });
+    els.downloadLog.addEventListener("click", downloadDetailedLog);
+    els.clearLog.addEventListener("click", clearDetailedLog);
+    els.markLog.addEventListener("click", () => writeLogRecord("manual_mark", {
+      settings: currentSettings(),
+      lastPct: state.lastPct,
+      lastLine: state.lastLine.trim()
+    }, true));
+    els.rate.addEventListener("change", () => {
+      localStorage.setItem(`${STORAGE_PREFIX}rate`, els.rate.value);
+      if (state.running) {
+        startBridge();
+      }
+    });
+    els.deadzone.addEventListener("change", () => {
+      localStorage.setItem(`${STORAGE_PREFIX}deadzone`, els.deadzone.value);
+      tick();
+    });
+    els.throttleDropoutGuard.addEventListener("change", () => {
+      localStorage.setItem(`${STORAGE_PREFIX}throttleDropoutGuard`, els.throttleDropoutGuard.value);
+      tick();
+    });
+    els.gamepadSelect.addEventListener("change", () => {
+      const pad = selectedGamepad();
+      saveSelectedGamepad();
+      rebuildAxisOptions(pad ? pad.axes.length : 1);
+      updateButtons();
+    });
+    els.lockGamepad.addEventListener("change", () => {
+      state.lockGamepad = els.lockGamepad.checked;
+      localStorage.setItem(`${STORAGE_PREFIX}lockGamepad`, String(state.lockGamepad));
+      if (state.lockGamepad) {
+        saveSelectedGamepad();
+      }
+    });
+
+    Object.values(controls).forEach((control) => {
+      Object.values(control).forEach((element) => {
+        if (element instanceof HTMLElement && ["SELECT", "INPUT"].includes(element.tagName)) {
+          element.addEventListener("change", () => {
+            savePedalSettings(control);
+            tick();
+          });
+        }
+      });
+    });
+
+    window.addEventListener("gamepadconnected", refreshGamepads);
+    window.addEventListener("gamepaddisconnected", refreshGamepads);
+
+    if (!("serial" in navigator)) {
+      log("Open this page in Chrome or Edge with Web Serial support.");
+    }
+
+    loadSavedSettings();
+    updateLogButtons();
+    refreshGamepads();
+    stopBridge();
+    reconnectGrantedSerial().catch((error) => log(error.message));
+  </script>
+</body>
+</html>

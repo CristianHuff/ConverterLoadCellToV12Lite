@@ -58,7 +58,8 @@ Recommended:
 
 If keeping the original Sim Ruito board and the translator box on the same pedal set:
 
-- do not power the same bridge from two boards without isolation;
-- keep common GND when signals are shared;
-- consider a physical selector switch for USB/power/pedals;
-- validate with a multimeter before powering everything together.
+- do not keep both boards connected to the same load cells at the same time;
+- one board can influence the other even when it is not powered;
+- use a physical selector switch, relay board, or connector swap to disconnect the unused board;
+- switch/disconnect `E+`, `E-`, `S+`, and `S-` for each pedal;
+- keep common GND only where signals are intentionally shared, but do not rely on GND alone to isolate two load-cell front ends.

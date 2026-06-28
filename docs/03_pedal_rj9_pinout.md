@@ -59,13 +59,14 @@ HX711 terminals B+ and B- remain unconnected (channel B is not used).
 
 ## Parallel Use with the Original Board
 
-The project idea is to let the pedals keep existing in the Sim Ruito/PC ecosystem while also feeding the translator box for PXN/PS5. This part still requires care.
+The original Sim Ruito board and the translator box should not stay connected to the same load cells at the same time. Testing showed that one board can influence the other through the load-cell bridge even when one side is not powered, causing noise/unstable readings on the Sim Ruito board.
 
-Defined points:
+Build recommendation:
 
-- signal wires `S+` and `S-` should not receive series diodes;
-- GND must be common when signals are shared;
-- it is not recommended to let two boards power the same load-cell bridge without isolation or switching;
-- a physical selector switch for power/USB/pedals may be more predictable than powering everything at once.
+- use a physical selector switch, relay board, or connector swap;
+- switch/disconnect the full load-cell set for each pedal: `E+`, `E-`, `S+`, and `S-`;
+- only one board should be electrically connected to a pedal's load cell at a time;
+- common GND alone does not prevent the two analog front ends from loading or biasing each other;
+- signal wires `S+` and `S-` should not receive series diodes.
 
-1N4148 diodes were considered to avoid backfeed, but the final parallel solution still needs bench validation before becoming a build recommendation.
+1N4148 diodes were considered to avoid backfeed, but they are not a recommended solution for the load-cell signal path.

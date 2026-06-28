@@ -34,11 +34,12 @@ Convert Sim Ruito load-cell pedals to work on PS5 by using a PXN wheel controlle
 
 ## Parallel Use with the Original Sim Ruito Board
 
-Keeping the original STM32 board and the Arduino connected to the same pedal set still needs hardware validation. To avoid backfeed and unstable readings:
+Keeping the original STM32 board and the Arduino/HX711 translator connected to the same load cells at the same time is not recommended. Bench testing showed that even when one board is not powered, the connected inputs can still influence the load-cell bridge and generate noise on the other board.
 
-- keep common GND between boards when signals are shared;
-- do not let two boards power the same bridge without isolation/selection;
-- a physical USB/power or pedal selector may be more predictable than trying to keep everything powered at the same time;
+- use only one electronics board on the load cells at a time;
+- do not leave the Sim Ruito board and HX711 modules connected in parallel to the same `E+`, `E-`, `S+`, and `S-` lines;
+- use a physical selector switch, relay board, or connector swap that disconnects the unused board from the load-cell wiring;
+- common GND is still required for systems that intentionally share signals, but common GND alone is not enough to make two load-cell front ends safe in parallel;
 - load-cell `S+` and `S-` wires should not receive series diodes.
 
 ## Documentation Files
