@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gamepad Serial Pedal Bridge</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="js/config.js"></script>
+  <script defer src="js/profiles.js"></script>
+  <script defer src="js/settings.js"></script>
+  <script defer src="js/telemetry.js"></script>
+  <script defer src="js/health.js"></script>
+  <script defer src="js/logger.js"></script>
+  <script defer src="js/app.js"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">PXN V12 Lite / Sim Ruito</p>
+        <h1>Gamepad Serial Pedal Bridge</h1>
+      </div>
+      <div class="status">
+        <span class="pill warn" id="gamepadStatus">Gamepad disconnected</span>
+        <span class="pill warn" id="serialStatus">Serial disconnected</span>
+        <span class="pill" id="sendStatus">Stopped</span>
+      </div>
+    </header>
+
+    <div class="dashboard-grid">
+      <section class="panel stack">
+        <h2>Connection</h2>
+        <label>
+          Gamepad
+          <select id="gamepadSelect"></select>
+        </label>
+        <label class="check"><input id="lockGamepad" type="checkbox" checked>Lock selected gamepad</label>
+        <label class="check"><input id="autoStart" type="checkbox" checked>Auto start when ready</label>
+        <div class="actions">
+          <button id="refreshGamepads">Refresh</button>
+          <button class="primary" id="connectSerial">Connect Serial</button>
+        </div>
+        <div class="actions">
+          <button class="primary" id="startBridge" disabled>Start</button>
+          <button id="stopBridge" disabled>Stop</button>
+        </div>
+        <div class="log" id="log">Ready.</div>
+      </section>
+
+      <section class="panel stack telemetry-panel">
+        <h2>Pedals</h2>
+        <div class="pedals">
+          <div class="pedal">
+            <strong>Clutch</strong>
+            <div class="bar"><div class="fill clutch-fill" id="clutchFill"></div></div>
+            <span class="value" id="clutchValue">0%</span>
+          </div>
+          <div class="pedal">
+            <strong>Brake</strong>
+            <div class="bar"><div class="fill brake-fill" id="brakeFill"></div></div>
+            <span class="value" id="brakeValue">0%</span>
+          </div>
+          <div class="pedal">
+            <strong>Throttle</strong>
+            <div class="bar"><div class="fill throttle-fill" id="throttleFill"></div></div>
+            <span class="value" id="throttleValue">0%</span>
+          </div>
+        </div>
+        <div class="runtime-grid">
+          <div class="metric"><span>TX rate</span><strong id="txRate">0 Hz</strong></div>
+          <div class="metric"><span>Packets</span><strong id="txCount">0</strong></div>
+          <div class="metric"><span>Drop guard</span><strong id="guardCount">0</strong></div>
+          <div class="metric metric-wide"><span>Last line</span><strong id="lastLine">0,0,0</strong></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="settings-grid">
+      <section class="panel stack">
+        <h2>Game Profile</h2>
+        <label>
+          Pedal profile
+          <select id="pedalProfile">
+            <option value="linear">Linear / PC</option>
+            <option value="gt7">GT7 inverse throttle</option>
+            <option value="custom">Custom throttle</option>
+          </select>
+        </label>
+        <canvas class="curve-preview" id="curvePreview" width="340" height="150"></canvas>
+        <div class="curve-controls">
+          <label>0 <input id="curve0" type="number" min="0" max="100" step="1" value="0"></label>
+          <label>25 <input id="curve25" type="number" min="0" max="100" step="1" value="45"></label>
+          <label>50 <input id="curve50" type="number" min="0" max="100" step="1" value="75"></label>
+          <label>75 <input id="curve75" type="number" min="0" max="100" step="1" value="90"></label>
+          <label>100 <input id="curve100" type="number" min="0" max="100" step="1" value="100"></label>
+        </div>
+        <button id="resetCurve">Reset Curve</button>
+        <div class="actions">
+          <button id="testThrottle" disabled>Test 50%</button>
+          <button id="testRest" disabled>Test Rest</button>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Signal Filters</h2>
+        <label>
+          Send rate Hz
+          <input id="rate" type="number" min="10" max="120" step="1" value="50">
+        </label>
+        <label>
+          Deadzone %
+          <input id="deadzone" type="number" min="0" max="10" step="1" value="0">
+        </label>
+        <label>
+          Clutch dropout guard ms
+          <input id="clutchDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+        </label>
+        <label>
+          Brake dropout guard ms
+          <input id="brakeDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+        </label>
+        <label>
+          Throttle dropout guard ms
+          <input id="throttleDropoutGuard" type="number" min="0" max="250" step="10" value="80">
+        </label>
+      </section>
+
+      <section class="panel stack">
+        <h2>Diagnostics</h2>
+        <label class="check"><input id="detailedLog" type="checkbox">Detailed log</label>
+        <canvas class="history-preview" id="signalHistory" width="340" height="120"></canvas>
+        <div class="alert-list" id="healthAlerts"></div>
+        <div class="recommendation-list" id="recommendations"></div>
+        <div class="actions">
+          <button id="startLog">Start Log</button>
+          <button id="downloadLog" disabled>Download Log</button>
+        </div>
+        <div class="actions">
+          <button id="clearLog" disabled>Clear Log</button>
+          <button id="markLog" disabled>Mark Event</button>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Configuration</h2>
+        <label>
+          Preset
+          <select id="presetSelect"></select>
+        </label>
+        <label>
+          Name
+          <input id="presetName" type="text" value="Sim Ruito GT7">
+        </label>
+        <div class="actions">
+          <button id="savePreset">Save Preset</button>
+          <button id="loadPreset">Load Preset</button>
+        </div>
+        <button id="deletePreset">Delete Preset</button>
+        <div class="actions">
+          <button id="exportConfig">Export</button>
+          <button id="importConfig">Import</button>
+        </div>
+        <button id="resetDefaults">Reset Defaults</button>
+        <input id="configImportFile" type="file" accept="application/json" hidden>
+      </section>
+
+      <section class="panel stack">
+        <h2>Calibration</h2>
+        <div class="step-row">
+          <span class="step-chip" id="calStepMin">Released</span>
+          <span class="step-chip" id="calStepMax">Pressed</span>
+          <span class="step-chip" id="calStepApply">Apply</span>
+        </div>
+        <div class="log compact-log" id="calibrationStatus">Idle.</div>
+        <div class="actions">
+          <button id="startCalibration">Start</button>
+          <button id="resetCalibration" disabled>Reset</button>
+        </div>
+        <div class="actions">
+          <button id="captureCalibrationMin" disabled>Capture Released</button>
+          <button id="captureCalibrationMax" disabled>Capture Pressed</button>
+        </div>
+        <button id="applyCalibration" disabled>Apply Calibration</button>
+      </section>
+    </div>
+
+    <section class="panel stack">
+      <h2>Axis Mapping</h2>
+      <div class="actions wide-actions">
+        <button id="captureAllMin">Set All Min</button>
+        <button id="captureAllMax">Set All Max</button>
+      </div>
+      <div class="mapping-grid">
+        <div class="map-panel">
+          <label>Clutch axis <select id="clutchAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="clutchMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="clutchMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <div class="actions">
+            <button id="clutchCaptureMin">Set Min</button>
+            <button id="clutchCaptureMax">Set Max</button>
+          </div>
+          <label class="check"><input id="clutchInvert" type="checkbox">Invert clutch</label>
+        </div>
+        <div class="map-panel">
+          <label>Brake axis <select id="brakeAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="brakeMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="brakeMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <div class="actions">
+            <button id="brakeCaptureMin">Set Min</button>
+            <button id="brakeCaptureMax">Set Max</button>
+          </div>
+          <label class="check"><input id="brakeInvert" type="checkbox">Invert brake</label>
+        </div>
+        <div class="map-panel">
+          <label>Throttle axis <select id="throttleAxis"></select></label>
+          <div class="row">
+            <label>Min <input id="throttleMin" type="number" step="0.01" value="-1"></label>
+            <label>Max <input id="throttleMax" type="number" step="0.01" value="1"></label>
+          </div>
+          <div class="actions">
+            <button id="throttleCaptureMin">Set Min</button>
+            <button id="throttleCaptureMax">Set Max</button>
+          </div>
+          <label class="check"><input id="throttleInvert" type="checkbox">Invert throttle</label>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel stack">
+      <h2>Live Axes</h2>
+      <div class="axis-grid" id="axisGrid"></div>
+    </section>
+  </main>
+</body>
+</html>

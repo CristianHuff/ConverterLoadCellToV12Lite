@@ -7,9 +7,9 @@ No Python packages are required. On Windows this uses winmm's joystick API and
 the built-in "mode" command to configure the serial port.
 
 Arduino serial protocol:
-    brake,throttle,clutch\n
+    clutch,brake,throttle\n
 Example:
-    12,47,0
+    0,12,47
 """
 
 from __future__ import annotations
@@ -230,7 +230,7 @@ def main() -> int:
             throttle = normalize_axis(throttle_raw, args.throttle_min, args.throttle_max, args.invert_throttle)
             clutch = normalize_axis(clutch_raw, args.clutch_min, args.clutch_max, args.invert_clutch)
 
-            line = f"{brake},{throttle},{clutch}\n".encode("ascii")
+            line = f"{clutch},{brake},{throttle}\n".encode("ascii")
             now = time.perf_counter()
             if line != last_line or (now - last_send) >= 0.5:
                 serial.write(line)
@@ -240,7 +240,7 @@ def main() -> int:
             if args.monitor:
                 print(
                     f"raw B={brake_raw:5d} T={throttle_raw:5d} C={clutch_raw:5d} "
-                    f"=> send {brake:3d},{throttle:3d},{clutch:3d}",
+                    f"=> send {clutch:3d},{brake:3d},{throttle:3d}",
                     end="\r",
                     flush=True,
                 )

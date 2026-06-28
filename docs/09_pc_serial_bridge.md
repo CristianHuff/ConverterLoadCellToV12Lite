@@ -12,7 +12,7 @@ Use this mode when the original Sim Ruito board should remain responsible for re
 Sim Ruito pedals -> original Sim Ruito board -> PC USB
                                                |
                                                v
-                                   tools/gamepad_serial_bridge.html
+                                   tools/gamepad_serial_bridge/index.html
                                                |
                                                v
 Arduino Nano serial bridge -> PWM/filter/divider -> PXN RJ45 -> PXN/base -> PS5
@@ -35,13 +35,13 @@ serial_pedal_bridge/serial_pedal_bridge.ino
 The Arduino expects serial lines at `115200` baud:
 
 ```text
-brake,throttle,clutch
+clutch,brake,throttle
 ```
 
 Example:
 
 ```text
-12,47,0
+0,12,47
 ```
 
 If no valid serial packet is received for `300 ms`, all outputs go to rest.
@@ -54,45 +54,49 @@ PWM output mapping remains:
 | Brake PWM | D10 |
 | Throttle PWM | D11 |
 
-The profile button on D8 still works:
-
-- quick click: switch profile;
-- profile 1: Linear/PC;
-- profile 2: GT7 inverse throttle.
-
-The active profile is volatile in this firmware. It is not saved to EEPROM.
+This serial firmware intentionally does not handle pedal profiles, calibration, EEPROM, button input, or status LED feedback. The Arduino only maps already-processed `0..100%` serial values to the measured PWM output ranges. Pedal profiles are handled by the PC bridge.
 
 ## PC Sender
 
 The primary PC bridge is a browser tool:
 
 ```text
-tools/gamepad_serial_bridge.html
+tools/gamepad_serial_bridge/index.html
 ```
 
 Open it in Chrome or Edge. It reads the original Sim Ruito board through the browser Gamepad API and sends the selected pedal percentages to the Arduino through Web Serial.
 
+The older `tools/gamepad_serial_bridge.html` file is kept as a compatibility launcher and redirects to the organized tool folder.
+
 Workflow:
 
-1. Open `tools/gamepad_serial_bridge.html` in Chrome or Edge.
+1. Open `tools/gamepad_serial_bridge/index.html` in Chrome or Edge.
 2. Press a pedal or button so the browser can see the gamepad.
 3. Select the Sim Ruito gamepad and keep `Lock selected gamepad` enabled.
 4. Click `Connect Serial` and choose the Arduino COM port.
-5. Map brake, throttle, and clutch axes.
+5. Map clutch, brake, and throttle axes.
 6. Click `Start`.
 
 The selected gamepad and axis mapping are saved in the browser. This prevents a remote-play controller, such as an Xbox controller created by Moonlight, from taking over when it connects later.
 
 After the first manual serial selection, Chrome/Edge can remember the Arduino port permission. On the next page load, the bridge tries to reconnect that authorized port and start automatically when the Sim Ruito gamepad is available.
 
+The tool also has a named preset system. Use `Save Preset` after a known-good setup, `Load Preset` to restore the selected preset, `Delete Preset` to remove old entries, and `Export`/`Import` to move the setup between browsers or PCs. The axis mapping panel can capture the current raw value as `Min` or `Max` for each pedal, or capture all pedals at once with `Set All Min` / `Set All Max`, when browser-side range adjustment is needed.
+
+The calibration panel provides a staged capture flow for released and pressed pedal snapshots before applying the values to the axis mapping. The diagnostics panel also shows automatic alerts and recommendations for missing locked gamepads, stale serial TX, dropout guard activity, low TX rate, rest noise, and non-monotonic custom curves. Supported recommendations include an apply button to adjust the related setting directly.
+
 Default filtering:
 
 | Setting | Default | Purpose |
 |---------|---------|---------|
+| Pedal profile | Linear / PC | Selects the PC-side pedal curve before serial output |
 | Send rate | 50 Hz | Sends pedal state often enough for smooth output |
 | Serial heartbeat | 100 ms | Keeps the Arduino below its 300 ms serial timeout |
 | Deadzone | 0% | Calibration/deadzone should be handled in FreeJoy/Sim Ruito |
-| Throttle dropout guard | 80 ms | Ignores very short full-throttle-to-zero glitches |
+| Clutch dropout guard | 80 ms | Ignores very short clutch-to-zero glitches |
+| Brake dropout guard | 80 ms | Ignores very short brake-to-zero glitches |
+| Throttle dropout guard | 80 ms | Ignores very short throttle-to-zero glitches |
+| Auto start | Enabled | Starts when the locked gamepad and Arduino serial port are available |
 
 ## Detailed Logs
 
@@ -109,18 +113,28 @@ When the serial port is connected but the live bridge is stopped, the page still
 The browser sends the same Arduino protocol:
 
 ```text
-brake,throttle,clutch
+clutch,brake,throttle
 ```
 
 The default browser axis mapping is:
 
 | Pedal | Joystick axis |
 |-------|---------------|
+| Clutch | Axis 1 |
 | Brake | Axis 2 |
 | Throttle | Axis 3 |
-| Clutch | Axis 1 |
 
-Axis raw ranges default to `-1..1`, which is the normal browser Gamepad API range. Keep the real pedal calibration, deadzones, and maximums in FreeJoy/Sim Ruito so the behavior is native for both PC and PS5 bridge use. The Arduino then maps `0..100%` to the measured PWM ranges in firmware: brake `3..204`, throttle `3..194`, and clutch `3..193`.
+Axis raw ranges default to `-1..1`, which is the normal browser Gamepad API range. Keep the real pedal calibration, deadzones, and maximums in FreeJoy/Sim Ruito so the behavior is native for both PC and PS5 bridge use.
+
+Available PC-side profiles:
+
+| Profile | Behavior |
+|---------|----------|
+| Linear / PC | Sends clutch, brake, and throttle linearly |
+| GT7 inverse throttle | Applies the GT7 inverse throttle table before sending serial output |
+| Custom throttle | Uses editable output points for throttle `[0,25,50,75,100]%` input |
+
+The GT7 inverse throttle table maps throttle `[0,25,50,75,100]%` to `[0,45,75,90,100]%`. The Arduino then maps the final `0..100%` values to the measured PWM ranges in firmware: brake `3..204`, throttle `3..194`, and clutch `3..193`.
 
 An optional Python version with equivalent parameters is also available:
 
@@ -133,8 +147,8 @@ tools/sim_ruito_to_serial.py
 1. Upload the serial bridge firmware.
 2. Connect the original Sim Ruito board to the PC.
 3. Connect the Arduino/translator box to the PC.
-4. Open `tools/gamepad_serial_bridge.html` in Chrome or Edge.
-5. Use the live axis view to find the brake, throttle, and clutch axes.
+4. Open `tools/gamepad_serial_bridge/index.html` in Chrome or Edge.
+5. Use the live axis view to find the clutch, brake, and throttle axes.
 6. Connect the Arduino serial port and click `Start`.
 7. Confirm the Arduino receives valid serial input.
 8. Measure RJ45 output voltages before connecting the PXN/base.

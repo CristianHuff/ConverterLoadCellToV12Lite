@@ -107,11 +107,14 @@ When enabled, it ignores the throttle HX711 and generates steps/a ramp on the th
 There is also a separate firmware/script path that keeps the original Sim Ruito board responsible for reading the load cells and sends pedal percentages from the PC to the Arduino over USB serial:
 
 - Arduino firmware: `serial_pedal_bridge/serial_pedal_bridge.ino`
-- Browser bridge: `tools/gamepad_serial_bridge.html`
+- Browser bridge: `tools/gamepad_serial_bridge/index.html`
 - Optional Python helper: `tools/sim_ruito_to_serial.py`
 - Documentation: [docs/09_pc_serial_bridge.md](docs/09_pc_serial_bridge.md)
 
 Use this mode when the PC is already required for SimHub/bass shakers and the HX711 translator should not be connected to the same load cells as the original Sim Ruito board.
+
+In this mode, FreeJoy/Sim Ruito owns pedal calibration and the browser bridge owns pedal profiles/curves. The Arduino serial bridge only converts received `0..100%` values into PXN-compatible PWM outputs. The legacy `tools/gamepad_serial_bridge.html` file remains as a compatibility launcher for the new organized tool folder.
+The serial bridge protocol uses pedal order `clutch,brake,throttle`, matching the physical pedal order.
 
 ## Documentation
 
