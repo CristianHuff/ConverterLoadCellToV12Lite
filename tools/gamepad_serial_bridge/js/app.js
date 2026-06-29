@@ -18,6 +18,10 @@
     localBridgeConnected: false,
     localBridgePollTimer: 0,
     localBridgeRxCount: 0,
+    nativeBridge: false,
+    nativeJoysticks: [],
+    nativeJoystick: null,
+    nativeSample: null,
     gamepadSignature: "",
     gamepadScanTimer: 0,
     running: false,
@@ -157,11 +161,19 @@
   }
 
   function canSendPedals() {
-    return isLocalBridgeTransport() ? state.localBridgeConnected : Boolean(state.writer);
+    return isHttpBridgeTransport() ? state.localBridgeConnected : Boolean(state.writer);
   }
 
   function isLocalBridgeTransport() {
     return els.serialTransport.value === bridge.TRANSPORT_LOCAL_BRIDGE;
+  }
+
+  function isNativeBridgeTransport() {
+    return els.serialTransport.value === bridge.TRANSPORT_NATIVE_BRIDGE;
+  }
+
+  function isHttpBridgeTransport() {
+    return isLocalBridgeTransport() || isNativeBridgeTransport();
   }
 
   function updateSerialStatus() {
@@ -169,8 +181,9 @@
       els.serialProtocol.textContent = state.serialProtocol === bridge.SERIAL_PROTOCOL_LEGACY ? "legacy" : "current";
     }
 
-    if (isLocalBridgeTransport()) {
-      setPill(els.serialStatus, state.localBridgeConnected ? "Local bridge connected" : "Local bridge disconnected", state.localBridgeConnected);
+    if (isHttpBridgeTransport()) {
+      const label = isNativeBridgeTransport() ? "Native bridge" : "Local bridge";
+      setPill(els.serialStatus, state.localBridgeConnected ? `${label} connected` : `${label} disconnected`, state.localBridgeConnected);
       return;
     }
 
@@ -320,6 +333,7 @@
 
     persistCurrentSettings();
     drawCurvePreview();
+    pushNativeConfig().catch((error) => writeStatus(error.message));
     tick();
     return true;
   }
@@ -349,6 +363,7 @@
 
     persistCurrentSettings();
     drawCurvePreview();
+    pushNativeConfig().catch((error) => writeStatus(error.message));
     tick();
   }
 
@@ -447,6 +462,7 @@
   function saveCustomCurve() {
     localStorage.setItem(`${bridge.STORAGE_PREFIX}customCurve`, JSON.stringify(currentCustomCurve()));
     drawCurvePreview();
+    pushNativeConfig().catch((error) => writeStatus(error.message));
     tick();
   }
 
@@ -482,10 +498,29 @@
   }
 
   function getGamepads() {
+    if (isNativeBridgeTransport()) {
+      return state.nativeJoysticks.map(nativePadFromStatus);
+    }
+
     return Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean);
   }
 
+  function nativePadFromStatus(joystick) {
+    const name = joystick && (joystick.name || joystick.id);
+    return {
+      id: `${joystick.id}: ${name}`,
+      nativeId: joystick.id,
+      index: Number(joystick.index ?? joystick.id),
+      axes: Array.isArray(joystick.axes) ? joystick.axes : [],
+      buttons: [],
+      connected: Boolean(joystick.connected !== false),
+      timestamp: performance.now(),
+      native: true
+    };
+  }
+
   function isPedalGamepad(pad) {
+    if (pad && pad.native) return true;
     return Boolean(pad && bridge.PEDAL_GAMEPAD_PATTERN.test(pad.id));
   }
 
@@ -495,7 +530,7 @@
 
   function gamepadListSignature(pads) {
     return pads
-      .map((pad) => `${pad.index}:${pad.id}:${pad.axes.length}:${pad.buttons.length}:${pad.connected}`)
+      .map((pad) => `${pad.index}:${pad.id}:${pad.axes.length}:${pad.buttons.length}:${pad.connected}:${pad.native ? "native" : "browser"}`)
       .join("|");
   }
 
@@ -522,6 +557,10 @@
   }
 
   function selectedGamepad() {
+    if (isNativeBridgeTransport() && state.nativeJoystick) {
+      return nativePadFromStatus(state.nativeJoystick);
+    }
+
     return preferredGamepad(getGamepads());
   }
 
@@ -899,6 +938,7 @@
     state.calibration.active = false;
     renderCalibration();
     writeStatus("Calibration applied.");
+    pushNativeConfig().catch((error) => writeStatus(error.message));
     detailedLogger.record("calibration_applied", {
       settings: currentSettings()
     }, true);
@@ -1009,7 +1049,7 @@
   }
 
   async function writeSerialRaw(line) {
-    if (isLocalBridgeTransport()) {
+    if (isHttpBridgeTransport()) {
       await writeLocalBridge(line);
       return;
     }
@@ -1052,6 +1092,21 @@
     if (!payload) return;
 
     state.localBridgeConnected = Boolean(payload.ok);
+    state.nativeBridge = Boolean(payload.nativeGamepad || payload.mode === "native-pedal-bridge");
+    state.nativeJoysticks = Array.isArray(payload.joysticks) ? payload.joysticks : [];
+    state.nativeJoystick = payload.joystick || null;
+    state.nativeSample = payload;
+
+    if (state.nativeBridge) {
+      if (payload.serialConfirmed !== false) {
+        state.serialConfirmed = true;
+      }
+      if (payload.outputLine) {
+        state.lastLine = `${payload.outputLine}\n`;
+      }
+      updateNativeStatus(payload);
+    }
+
     const rxCount = Number(payload.rxCount) || 0;
     if (rxCount > state.localBridgeRxCount) {
       const newCount = rxCount - state.localBridgeRxCount;
@@ -1064,6 +1119,80 @@
     }
     updateSerialStatus();
     updateButtons();
+    if (state.nativeBridge) maybeAutoStart();
+  }
+
+  function updateNativeStatus(payload) {
+    const pads = getGamepads();
+    const preferred = selectedGamepad() || preferredGamepad(pads);
+    const signature = gamepadListSignature(pads);
+    if (signature !== state.gamepadSignature) {
+      state.gamepadSignature = signature;
+      renderNativeGamepads(pads, preferred);
+    }
+
+    if (preferred) {
+      setPill(els.gamepadStatus, "Native gamepad connected", true);
+      updateAxes(preferred);
+    } else {
+      setPill(els.gamepadStatus, "Native gamepad missing", false);
+      updateAxes(null);
+    }
+
+    const pedals = payload.pedals || {};
+    const output = {
+      clutch: bridge.clampPct(Number(pedals.clutch) || 0),
+      brake: bridge.clampPct(Number(pedals.brake) || 0),
+      throttle: bridge.clampPct(Number(pedals.throttle) || 0)
+    };
+    bridge.PEDAL_ORDER.forEach((key) => setPedal(controls[key], output[key]));
+
+    if (payload.running) {
+      telemetry.markSample(output);
+      telemetry.syncNativeTx(payload.txCount, payload.lastLine || payload.outputLine, Number((payload.config || {}).rateHz) || Number(els.rate.value), true);
+      els.sendStatus.textContent = `Running ${payload.outputLine || payload.lastLine || bridge.REST_LINE.trim()}`;
+      els.sendStatus.classList.add("ok");
+      els.sendStatus.classList.remove("warn");
+      state.running = true;
+    } else if (state.running) {
+      state.running = false;
+      els.sendStatus.classList.remove("ok", "warn");
+      els.sendStatus.textContent = "Stopped";
+    }
+
+    if (els.lastLine && (payload.outputLine || payload.lastLine)) {
+      els.lastLine.textContent = payload.outputLine || payload.lastLine;
+    }
+    if (els.arduinoRx) {
+      els.arduinoRx.textContent = payload.rxLast || "native bridge active";
+    }
+
+    telemetry.render();
+    updateHealth(preferred, output);
+  }
+
+  function renderNativeGamepads(pads, preferred) {
+    els.gamepadSelect.textContent = "";
+    pads.forEach((pad) => {
+      const option = document.createElement("option");
+      option.value = String(pad.nativeId ?? pad.index);
+      option.textContent = `${pad.index}: ${pad.id.replace(/^\d+:\s*/, "")}`;
+      els.gamepadSelect.append(option);
+    });
+
+    if (preferred) {
+      els.gamepadSelect.value = String(preferred.nativeId ?? preferred.index);
+      rebuildAxisOptions(preferred.axes.length);
+    } else {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No native gamepad detected";
+      els.gamepadSelect.prepend(option);
+      els.gamepadSelect.value = "";
+      rebuildAxisOptions(7);
+    }
+
+    renderGamepadList(pads, preferred);
   }
 
   async function writeLocalBridge(line) {
@@ -1079,7 +1208,7 @@
   function startLocalBridgePolling() {
     window.clearInterval(state.localBridgePollTimer);
     state.localBridgePollTimer = window.setInterval(() => {
-      if (!state.localBridgeConnected || !isLocalBridgeTransport()) return;
+      if (!state.localBridgeConnected || !isHttpBridgeTransport()) return;
       fetchLocalBridge("/status")
         .then(handleLocalBridgeStatus)
         .catch((error) => {
@@ -1089,6 +1218,32 @@
           updateButtons();
         });
     }, 500);
+  }
+
+  async function pushNativeConfig() {
+    if (!isNativeBridgeTransport() || !state.localBridgeConnected) return;
+    const payload = await fetchLocalBridge("/config", {
+      method: "POST",
+      body: JSON.stringify(currentSettings())
+    });
+    handleLocalBridgeStatus(payload);
+  }
+
+  async function startNativeBridge() {
+    const payload = await fetchLocalBridge("/start", {
+      method: "POST",
+      body: JSON.stringify({ config: currentSettings() })
+    });
+    handleLocalBridgeStatus(payload);
+  }
+
+  async function stopNativeBridge() {
+    if (!state.localBridgeConnected) return;
+    const payload = await fetchLocalBridge("/stop", {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    handleLocalBridgeStatus(payload);
   }
 
   function stopLocalBridgePolling() {
@@ -1190,7 +1345,7 @@
   }
 
   async function connectSerial() {
-    if (isLocalBridgeTransport()) {
+    if (isHttpBridgeTransport()) {
       if (state.localBridgeConnected) {
         disconnectLocalBridge();
       } else {
@@ -1219,11 +1374,16 @@
       const payload = await fetchLocalBridge("/status");
       state.localBridgeConnected = true;
       handleLocalBridgeStatus(payload);
+      if (isNativeBridgeTransport()) {
+        await pushNativeConfig();
+      }
       startLocalBridgePolling();
-      writeStatus("Local COM bridge connected.");
+      writeStatus(isNativeBridgeTransport() ? "Native pedal bridge connected." : "Local COM bridge connected.");
       updateButtons();
-      await sendSerialProbe("local_bridge_connect");
-      await sendLine(bridge.REST_LINE);
+      if (!isNativeBridgeTransport()) {
+        await sendSerialProbe("local_bridge_connect");
+        await sendLine(bridge.REST_LINE);
+      }
       requestAutoStartRetry(20000);
     } catch (error) {
       state.localBridgeConnected = false;
@@ -1235,15 +1395,19 @@
 
   function disconnectLocalBridge() {
     state.localBridgeConnected = false;
+    state.nativeBridge = false;
+    state.nativeJoystick = null;
+    state.nativeJoysticks = [];
+    state.nativeSample = null;
     state.localBridgeRxCount = 0;
     stopLocalBridgePolling();
     updateSerialStatus();
     updateButtons();
-    writeStatus("Local COM bridge disconnected.");
+    writeStatus(isNativeBridgeTransport() ? "Native pedal bridge disconnected." : "Local COM bridge disconnected.");
   }
 
   async function disconnectSerial() {
-    if (isLocalBridgeTransport()) {
+    if (isHttpBridgeTransport()) {
       disconnectLocalBridge();
       return;
     }
@@ -1293,7 +1457,7 @@
   }
 
   async function reconnectGrantedSerial() {
-    if (isLocalBridgeTransport()) return;
+    if (isHttpBridgeTransport()) return;
     if (!("serial" in navigator) || state.writer) return;
 
     const ports = await navigator.serial.getPorts();
@@ -1314,7 +1478,7 @@
       return;
     }
 
-    stopBridge();
+    await stopBridgeForManual();
     window.clearInterval(state.manualStreamTimer);
     const line = `${command}\n`;
     await sendLine(line);
@@ -1349,7 +1513,7 @@
       return;
     }
 
-    stopBridge();
+    await stopBridgeForManual();
     window.clearInterval(state.manualStreamTimer);
 
     const lineForCurrentProtocol = () => (
@@ -1411,7 +1575,7 @@
       return;
     }
 
-    stopBridge();
+    await stopBridgeForManual();
     window.clearInterval(state.manualStreamTimer);
 
     const startedAt = performance.now();
@@ -1469,6 +1633,13 @@
   }
 
   async function tick() {
+    if (isNativeBridgeTransport()) {
+      if (state.nativeSample) {
+        updateNativeStatus(state.nativeSample);
+      }
+      return;
+    }
+
     if (!state.running) {
       try {
         await sendRestKeepalive("bridge_stopped");
@@ -1592,7 +1763,7 @@
       now: performance.now(),
       running: state.running,
       serialConnected: canSendPedals(),
-      serialConfirmed: isLocalBridgeTransport() ? state.localBridgeConnected : state.serialConfirmed,
+      serialConfirmed: isHttpBridgeTransport() ? state.localBridgeConnected : state.serialConfirmed,
       serialOpenAgeMs: state.serialOpenedAt ? performance.now() - state.serialOpenedAt : 0,
       serialLastRxAgeMs: state.serialLastRx ? performance.now() - state.serialLastRx : null,
       serialUnexpectedRx: state.serialUnexpectedRx,
@@ -1693,6 +1864,26 @@
       return;
     }
 
+    if (isNativeBridgeTransport()) {
+      state.running = true;
+      window.clearInterval(state.timer);
+      startNativeBridge()
+        .then(() => {
+          setPill(els.sendStatus, "Running", true);
+          writeStatus("Native pedal stream started.");
+          detailedLogger.record("native_bridge_started", { settings: currentSettings() }, true);
+          updateButtons();
+        })
+        .catch((error) => {
+          state.running = false;
+          setPill(els.sendStatus, "Start failed", false);
+          writeStatus(error.message);
+          updateButtons();
+        });
+      updateButtons();
+      return;
+    }
+
     state.running = true;
     const rate = Math.max(10, Math.min(120, Number(els.rate.value) || 50));
     window.clearInterval(state.timer);
@@ -1735,15 +1926,37 @@
   }
 
   function stopBridge() {
+    const wasNative = isNativeBridgeTransport();
     state.running = false;
     cancelAutoStartRetry();
     window.clearInterval(state.timer);
     window.clearInterval(state.manualStreamTimer);
     state.manualStreamTimer = 0;
-    state.timer = window.setInterval(runTick, 120);
+    if (wasNative) {
+      stopNativeBridge().catch((error) => writeStatus(error.message));
+    } else {
+      state.timer = window.setInterval(runTick, 120);
+    }
     els.sendStatus.classList.remove("ok", "warn");
     els.sendStatus.textContent = "Stopped";
     detailedLogger.record("bridge_stopped", { settings: currentSettings() });
+    updateButtons();
+  }
+
+  async function stopBridgeForManual() {
+    if (!isNativeBridgeTransport()) {
+      stopBridge();
+      return;
+    }
+
+    state.running = false;
+    cancelAutoStartRetry();
+    window.clearInterval(state.timer);
+    window.clearInterval(state.manualStreamTimer);
+    state.manualStreamTimer = 0;
+    els.sendStatus.classList.remove("ok", "warn");
+    els.sendStatus.textContent = "Stopped";
+    await stopNativeBridge();
     updateButtons();
   }
 
@@ -1751,8 +1964,10 @@
     const hasPad = Boolean(selectedGamepad());
     const hasPort = Boolean(state.writer);
     const hasSerial = canSendPedals();
-    els.connectSerial.textContent = isLocalBridgeTransport()
-      ? state.localBridgeConnected ? "Disconnect Bridge" : "Connect Bridge"
+    els.connectSerial.textContent = isHttpBridgeTransport()
+      ? state.localBridgeConnected
+        ? isNativeBridgeTransport() ? "Disconnect Native" : "Disconnect Bridge"
+        : isNativeBridgeTransport() ? "Connect Native" : "Connect Bridge"
       : hasPort ? "Disconnect Serial" : "Connect Serial";
     els.startBridge.disabled = state.running || !hasPad || !hasSerial;
     els.stopBridge.disabled = !state.running;
@@ -1780,6 +1995,7 @@
       localStorage.setItem(`${bridge.STORAGE_PREFIX}pedalProfile`, els.pedalProfile.value);
       detailedLogger.record("profile_changed", { pedalProfile: els.pedalProfile.value }, true);
       drawCurvePreview();
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     [els.curve0, els.curve25, els.curve50, els.curve75, els.curve100].forEach((input) => {
@@ -1788,6 +2004,7 @@
     els.resetCurve.addEventListener("click", () => {
       setCustomCurve(bridge.GT7_THROTTLE_OUTPUT);
       saveCustomCurve();
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       writeStatus("Custom curve reset.");
     });
 
@@ -1815,6 +2032,7 @@
 
     els.rate.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}rate`, els.rate.value);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       if (state.running) startBridge();
     });
     els.serialTransport.addEventListener("change", () => {
@@ -1822,29 +2040,39 @@
       stopBridge();
       updateSerialStatus();
       updateButtons();
-      writeStatus(els.serialTransport.value === bridge.TRANSPORT_LOCAL_BRIDGE
-        ? "Local COM bridge selected. Start tools/local_serial_http_bridge.ps1 first."
-        : "Browser Web Serial selected.");
+      writeStatus(isNativeBridgeTransport()
+        ? "Native pedal bridge selected. Start with start_pedal_bridge.cmd."
+        : els.serialTransport.value === bridge.TRANSPORT_LOCAL_BRIDGE
+          ? "Local COM bridge selected. Start tools/local_serial_http_bridge.ps1 first."
+          : "Browser Web Serial selected.");
+      if (isHttpBridgeTransport()) {
+        connectLocalBridge().catch((error) => writeStatus(error.message));
+      }
     });
     els.txMode.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}txMode`, els.txMode.value);
       detailedLogger.record("tx_mode_changed", { txMode: els.txMode.value }, true);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     els.deadzone.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}deadzone`, els.deadzone.value);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     els.clutchDropoutGuard.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}clutchDropoutGuard`, els.clutchDropoutGuard.value);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     els.brakeDropoutGuard.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}brakeDropoutGuard`, els.brakeDropoutGuard.value);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     els.throttleDropoutGuard.addEventListener("change", () => {
       localStorage.setItem(`${bridge.STORAGE_PREFIX}throttleDropoutGuard`, els.throttleDropoutGuard.value);
+      pushNativeConfig().catch((error) => writeStatus(error.message));
       tick();
     });
     els.autoStart.addEventListener("change", () => {
@@ -1910,7 +2138,11 @@
     });
     els.gamepadSelect.addEventListener("change", () => {
       const selectedIndex = Number(els.gamepadSelect.value);
-      const pad = getGamepads().find((gamepad) => gamepad.index === selectedIndex);
+      const pad = getGamepads().find((gamepad) => (
+        isNativeBridgeTransport()
+          ? Number(gamepad.nativeId ?? gamepad.index) === selectedIndex
+          : gamepad.index === selectedIndex
+      ));
       if (pad) {
         if (!isPedalGamepad(pad)) {
           writeStatus(`Ignored non-pedal gamepad: ${pad.id}`);
@@ -1920,6 +2152,7 @@
 
         state.selectedGamepadId = pad.id;
         localStorage.setItem(`${bridge.STORAGE_PREFIX}selectedGamepadId`, pad.id);
+        pushNativeConfig().catch((error) => writeStatus(error.message));
         detailedLogger.record("gamepad_locked", {
           id: pad.id,
           index: pad.index
@@ -1939,6 +2172,7 @@
       [control.axis, control.min, control.max, control.invert].forEach((element) => {
         element.addEventListener("change", () => {
           savePedalSettings(control);
+          pushNativeConfig().catch((error) => writeStatus(error.message));
           tick();
         });
       });
@@ -1964,7 +2198,7 @@
     const params = new URLSearchParams(window.location.search);
     const transport = params.get("transport");
 
-    if (transport === bridge.TRANSPORT_LOCAL_BRIDGE || transport === bridge.TRANSPORT_WEB_SERIAL) {
+    if (transport === bridge.TRANSPORT_NATIVE_BRIDGE || transport === bridge.TRANSPORT_LOCAL_BRIDGE || transport === bridge.TRANSPORT_WEB_SERIAL) {
       els.serialTransport.value = transport;
       localStorage.setItem(`${bridge.STORAGE_PREFIX}serialTransport`, transport);
     }
@@ -1991,7 +2225,7 @@
     startGamepadScanner();
     drawCurvePreview();
     stopBridge();
-    if (isLocalBridgeTransport()) {
+    if (isHttpBridgeTransport()) {
       connectLocalBridge().catch((error) => writeStatus(error.message));
     } else {
       reconnectGrantedSerial().catch((error) => writeStatus(error.message));

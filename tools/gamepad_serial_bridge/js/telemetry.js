@@ -31,6 +31,17 @@
       render();
     }
 
+    function syncNativeTx(count, line, rateHz, running) {
+      const now = performance.now();
+      state.txCount = Math.max(state.txCount, Number(count) || 0);
+      state.lastLine = String(line || state.lastLine).trim();
+      if (running) {
+        const visibleRate = Math.max(0, Math.min(120, Math.round(Number(rateHz) || 0)));
+        state.txWindow = Array.from({ length: visibleRate }, () => now);
+      }
+      render();
+    }
+
     function markGuardedDrop(key) {
       state.guardCount += 1;
       if (key && Object.prototype.hasOwnProperty.call(state.guardByPedal, key)) {
@@ -104,7 +115,7 @@
     }
 
     render();
-    return { state, render, markTx, markGuardedDrop, markSample, reset };
+    return { state, render, markTx, syncNativeTx, markGuardedDrop, markSample, reset };
   }
 
   bridge.createTelemetry = createTelemetry;

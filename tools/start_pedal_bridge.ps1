@@ -12,7 +12,7 @@ $bridgeScript = Join-Path $PSScriptRoot "local_serial_http_bridge.ps1"
 $panelPath = Join-Path $PSScriptRoot "gamepad_serial_bridge\index.html"
 $bridgeUrl = "http://127.0.0.1:$HttpPort"
 $statusUrl = "$bridgeUrl/status"
-$panelUrl = "file:///$($panelPath.Replace('\', '/'))?transport=local-bridge&autostart=1"
+$panelUrl = "file:///$($panelPath.Replace('\', '/'))?transport=native-bridge&autostart=1"
 
 New-Item -ItemType Directory -Force -Path $logsDir | Out-Null
 
@@ -52,13 +52,13 @@ for ($attempt = 0; $attempt -lt 40; $attempt++) {
 }
 
 if (-not $ready) {
-  Write-Host "Local COM bridge did not answer at $statusUrl."
-  Write-Host "Check Logs\local_serial_bridge.err.log and confirm $Port is not open elsewhere."
+  Write-Host "Native pedal bridge did not answer at $statusUrl."
+  Write-Host "Confirm $Port is not open elsewhere and check the bridge PowerShell window."
   Start-Process $panelUrl
   exit 1
 }
 
-Write-Host "Local COM bridge is ready at $bridgeUrl."
+Write-Host "Native pedal bridge is ready at $bridgeUrl."
 
 if ($TestPulse) {
   Invoke-RestMethod `

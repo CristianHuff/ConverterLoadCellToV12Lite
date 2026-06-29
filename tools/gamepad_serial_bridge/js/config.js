@@ -11,7 +11,8 @@
   bridge.REST_LINE = "0,0,0\n";
   bridge.TRANSPORT_WEB_SERIAL = "web-serial";
   bridge.TRANSPORT_LOCAL_BRIDGE = "local-bridge";
-  bridge.TRANSPORT_DEFAULT = bridge.TRANSPORT_LOCAL_BRIDGE;
+  bridge.TRANSPORT_NATIVE_BRIDGE = "native-bridge";
+  bridge.TRANSPORT_DEFAULT = bridge.TRANSPORT_NATIVE_BRIDGE;
   bridge.LOCAL_BRIDGE_URL = "http://127.0.0.1:17384";
   bridge.SERIAL_PROTOCOL_CURRENT = "clutch,brake,throttle";
   bridge.SERIAL_PROTOCOL_LEGACY = "brake,throttle,clutch";

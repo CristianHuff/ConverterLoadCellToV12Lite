@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Gamepad Serial Pedal Bridge</title>
-  <link rel="stylesheet" href="styles.css?v=20260628-autostart-retry">
-  <script defer src="js/config.js?v=20260628-autostart-retry"></script>
+  <link rel="stylesheet" href="styles.css?v=20260628-native-bridge">
+  <script defer src="js/config.js?v=20260628-native-bridge"></script>
   <script defer src="js/profiles.js"></script>
   <script defer src="js/settings.js"></script>
-  <script defer src="js/telemetry.js"></script>
-  <script defer src="js/health.js?v=20260628-autostart-retry"></script>
+  <script defer src="js/telemetry.js?v=20260628-native-bridge"></script>
+  <script defer src="js/health.js?v=20260628-native-bridge"></script>
   <script defer src="js/logger.js"></script>
-  <script defer src="js/app.js?v=20260628-autostart-retry"></script>
+  <script defer src="js/app.js?v=20260628-native-bridge"></script>
 </head>
 <body>
   <main class="shell">
@@ -111,6 +111,7 @@
         <label>
           Serial transport
           <select id="serialTransport">
+            <option value="native-bridge">Native pedal bridge</option>
             <option value="local-bridge">Local COM bridge</option>
             <option value="web-serial">Browser Web Serial</option>
           </select>

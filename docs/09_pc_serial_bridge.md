@@ -12,7 +12,12 @@ Use this mode when the original Sim Ruito board should remain responsible for re
 Sim Ruito pedals -> original Sim Ruito board -> PC USB
                                                |
                                                v
+                      tools/local_serial_http_bridge.ps1
+                         Windows native joystick API + COM4
+                                               |
+                                               v
                                    tools/gamepad_serial_bridge/index.html
+                                      monitoring/config UI
                                                |
                                                v
 Arduino Nano serial bridge -> PWM/filter/divider -> PXN RJ45 -> PXN/base -> PS5
@@ -72,21 +77,21 @@ This serial firmware intentionally does not handle pedal profiles, calibration, 
 
 ## PC Sender
 
-The primary PC bridge is a browser tool:
-
-```text
-tools/gamepad_serial_bridge/index.html
-```
-
-Open it in Chrome or Edge. It reads the original Sim Ruito board through the browser Gamepad API and sends the selected pedal percentages to the Arduino through Web Serial.
-
-If Browser Web Serial is unreliable on the PC, use the local COM bridge instead. Start it before opening the browser tool:
+The primary PC bridge is now the local native bridge:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\local_serial_http_bridge.ps1 -Port COM4
 ```
 
-Then set `Serial transport` to `Local COM bridge` in the browser tool and click `Connect Bridge`. The browser still reads the gamepad, but serial writes go through `http://127.0.0.1:17384/` to the PowerShell bridge, which keeps COM4 open.
+It reads the Sim Ruito/FreeJoy joystick through the Windows native joystick API, applies the selected pedal profile, axis mapping, calibration, deadzone, and dropout guard settings, and writes the Arduino serial stream directly. This avoids the browser Gamepad API limit where Chrome/Edge may expose only part of the connected controllers when the cockpit has many USB devices.
+
+The browser tool is still the configuration and monitoring panel:
+
+```text
+tools/gamepad_serial_bridge/index.html
+```
+
+Open it in Chrome or Edge and keep `Serial transport` set to `Native pedal bridge`. The panel talks to `http://127.0.0.1:17384/`, shows the native joystick list, and pushes settings to the PowerShell bridge. `Browser Web Serial` and `Local COM bridge` remain available as fallback/debug transports.
 
 For normal use there are two automation options:
 
@@ -94,7 +99,7 @@ For normal use there are two automation options:
 start_pedal_bridge.cmd
 ```
 
-starts the local COM bridge minimized and opens the panel.
+starts the native local bridge and opens the panel with auto-start enabled.
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\install_local_bridge_startup.ps1 -Port COM4
@@ -114,19 +119,17 @@ powershell -ExecutionPolicy Bypass -File tools\uninstall_local_bridge_startup.ps
 
 The older `tools/gamepad_serial_bridge.html` file is kept as a compatibility launcher and redirects to the organized tool folder.
 
-Workflow:
+Native workflow:
 
-1. Open `tools/gamepad_serial_bridge/index.html` in Chrome or Edge.
-2. Press a pedal or button so the browser can see the gamepad.
-3. Select the Sim Ruito gamepad and keep `Lock selected gamepad` enabled.
-4. Click `Connect Serial` and choose the Arduino COM port.
-5. Check the serial status. `Arduino confirmed` and `Arduino RX` messages are useful diagnostics, but the bridge can transmit as soon as the serial port is open.
-6. Map clutch, brake, and throttle axes.
-7. Click `Start`.
+1. Run `start_pedal_bridge.cmd`.
+2. Keep `Serial transport` set to `Native pedal bridge`.
+3. Select the Sim Ruito/FreeJoy pedal device from the native joystick list and keep `Lock selected gamepad` enabled.
+4. Map clutch, brake, and throttle axes if needed. Native axis `0` is a dummy slot, so the default mapping keeps clutch `1`, brake `2`, and throttle `3`.
+5. Click `Start`, or leave `Auto start when ready` enabled.
 
-The selected gamepad and axis mapping are saved in the browser. This prevents a remote-play controller, such as an Xbox controller created by Moonlight, from taking over when it connects later.
+The selected gamepad and axis mapping are saved in the browser and pushed to the native bridge. This prevents a remote-play controller, such as an Xbox controller created by Moonlight, from taking over when it connects later.
 
-If FreeJoy sees the Sim Ruito board but the browser does not, press a pedal while the browser page is focused and click `Refresh`. Chrome/Edge may not expose a gamepad to the page until it receives user input from that device. After reconnecting USB cables, a hard reload of the page can also force the browser Gamepad API to rebuild its device list. The `Connected Gamepads` panel shows every gamepad currently exposed by the browser, which may be fewer than the devices visible to Windows/FreeJoy. The tool polls for gamepad list changes and can recover the lock automatically when a Sim Ruito/FreeJoy/pedal-like device reappears with a changed index or ID. Remote-play/XInput devices such as Moonlight's `Xbox 360 Controller` are ignored by auto-selection so they do not steal the pedal slot. SimJack devices are intentionally not treated as Sim Ruito pedals.
+In native mode, the `Connected Gamepads` panel shows devices reported by Windows `winmm`, not by the browser. This is the recommended mode when FreeJoy sees the board but Chrome/Edge lists only a few controllers. If you switch to Browser Web Serial fallback, the old browser Gamepad API limitations still apply.
 
 After the first manual serial selection, Chrome/Edge can remember the Arduino port permission. On the next page load, the bridge tries to reconnect that authorized port and start automatically when the Sim Ruito gamepad is available.
 

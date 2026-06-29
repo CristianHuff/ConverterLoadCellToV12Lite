@@ -27,10 +27,10 @@ Register-ScheduledTask `
   -Action $action `
   -Trigger $trigger `
   -Settings $settings `
-  -Description "Starts the local COM bridge for the pedal browser panel." `
+  -Description "Starts the native pedal bridge for the browser panel." `
   -Force | Out-Null
 
 Start-ScheduledTask -TaskName $TaskName
 
 Write-Host "Installed and started scheduled task '$TaskName' for $Port."
-Write-Host "Open tools\gamepad_serial_bridge\index.html and use Serial transport = Local COM bridge."
+Write-Host "Open tools\gamepad_serial_bridge\index.html and use Serial transport = Native pedal bridge."
